@@ -1,8 +1,7 @@
 import { Response } from "express";
-import { Entry, TaskCompletion, Type } from "../models";
+import { Entry, TaskCompletion } from "../models";
 import { AuthRequest, EntryStatus } from "../types";
 import { isTaskOnDate, getDayRange } from "../utils/recurrence";
-import { validateMetadata } from "../utils/validateMetadata";
 
 export const createEntry = async (req: AuthRequest, res: Response) => {
   try {
@@ -10,42 +9,36 @@ export const createEntry = async (req: AuthRequest, res: Response) => {
     const {
       title,
       notes,
+      solution,
       status,
-      type,
-      subtype,
+      category,
+      topic,
+      difficulty,
+      source,
+      url,
       tags,
       deadline,
       isRecurring,
       recurrence,
       recurringEndDate,
-      metadata,
     } = req.body;
-
-    // Validate metadata against type's field definitions
-    if (metadata && type) {
-      const typeDoc = await Type.findById(type);
-      if (typeDoc && typeDoc.fields.length > 0) {
-        const { valid, errors } = validateMetadata(metadata, typeDoc.fields);
-        if (!valid) {
-          res.status(400).json({ message: "Metadata validation failed", errors });
-          return;
-        }
-      }
-    }
 
     const entry = await Entry.create({
       title,
       notes,
+      solution,
       status,
-      type,
-      subtype,
+      category,
+      topic,
+      difficulty,
+      source,
+      url,
       tags,
       userId,
       deadline,
       isRecurring,
       recurrence,
       recurringEndDate,
-      metadata,
     });
 
     res.status(201).json(entry);
@@ -58,9 +51,12 @@ export const getAllEntries = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
     const filter: Record<string, any> = { userId };
-    if (req.query.type) filter.type = req.query.type as string;
-    if (req.query.subtype) filter.subtype = req.query.subtype as string;
+    if (req.query.category) filter.category = req.query.category as string;
+    if (req.query.topic) filter.topic = req.query.topic as string;
+    if (req.query.difficulty) filter.difficulty = req.query.difficulty as string;
     if (req.query.status) filter.status = req.query.status as string;
+    if (req.query.source) filter.source = req.query.source as string;
+    if (req.query.tag) filter.tags = req.query.tag as string;
 
     // Support date filtering on the flat list
     if (req.query.date) {
@@ -74,12 +70,25 @@ export const getAllEntries = async (req: AuthRequest, res: Response) => {
       filter.isRecurring = { $ne: true };
     }
 
-    const entries = await Entry.find(filter)
-      .populate("type", "name")
-      .populate("subtype", "name")
-      .sort({ deadline: 1 });
+    // Pagination
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
+    const skip = (page - 1) * limit;
 
-    res.status(200).json(entries);
+    const [entries, total] = await Promise.all([
+      Entry.find(filter).sort({ deadline: 1 }).skip(skip).limit(limit),
+      Entry.countDocuments(filter),
+    ]);
+
+    res.status(200).json({
+      entries,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
   } catch (error) {
     res.status(500).json({ message: "Error fetching entries", error });
   }
@@ -89,9 +98,7 @@ export const getEntryById = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
 
-    const entry = await Entry.findOne({ _id: req.params.id, userId })
-      .populate("type", "name")
-      .populate("subtype", "name");
+    const entry = await Entry.findOne({ _id: req.params.id, userId });
 
     if (!entry) {
       res.status(404).json({ message: "Entry not found" });
@@ -110,44 +117,37 @@ export const updateEntry = async (req: AuthRequest, res: Response) => {
     const {
       title,
       notes,
+      solution,
       status,
-      type,
-      subtype,
+      category,
+      topic,
+      difficulty,
+      source,
+      url,
       tags,
       deadline,
       isRecurring,
       recurrence,
       recurringEndDate,
-      metadata,
     } = req.body;
-
-    // Validate metadata if provided
-    const typeId = type || (await Entry.findOne({ _id: req.params.id, userId }))?.type;
-    if (metadata && typeId) {
-      const typeDoc = await Type.findById(typeId);
-      if (typeDoc && typeDoc.fields.length > 0) {
-        const { valid, errors } = validateMetadata(metadata, typeDoc.fields);
-        if (!valid) {
-          res.status(400).json({ message: "Metadata validation failed", errors });
-          return;
-        }
-      }
-    }
 
     const entry = await Entry.findOneAndUpdate(
       { _id: req.params.id, userId },
       {
         title,
         notes,
+        solution,
         status,
-        type,
-        subtype,
+        category,
+        topic,
+        difficulty,
+        source,
+        url,
         tags,
         deadline,
         isRecurring,
         recurrence,
         recurringEndDate,
-        metadata,
       },
       { new: true, runValidators: true }
     );
@@ -174,6 +174,9 @@ export const deleteEntry = async (req: AuthRequest, res: Response) => {
       return;
     }
 
+    // Clean up associated task completions
+    await TaskCompletion.deleteMany({ entry: entry._id, userId });
+
     res.status(200).json({ message: "Entry deleted" });
   } catch (error) {
     res.status(500).json({ message: "Error deleting entry", error });
@@ -184,7 +187,7 @@ export const deleteEntry = async (req: AuthRequest, res: Response) => {
 
 /**
  * Resolves all tasks (one-off + recurring) for a given date,
- * merges with completions, and groups by type.
+ * merges with completions, and groups by category.
  */
 const getTasksForDate = async (userId: string, date: Date) => {
   const { start, end } = getDayRange(date);
@@ -194,9 +197,7 @@ const getTasksForDate = async (userId: string, date: Date) => {
     userId,
     isRecurring: { $ne: true },
     deadline: { $gte: start, $lte: end },
-  })
-    .populate("type", "name")
-    .populate("subtype", "name");
+  });
 
   // 2. All recurring tasks that could be active on this date
   const recurringTasks = await Entry.find({
@@ -208,9 +209,7 @@ const getTasksForDate = async (userId: string, date: Date) => {
       { recurringEndDate: null },
       { recurringEndDate: { $gte: start } },
     ],
-  })
-    .populate("type", "name")
-    .populate("subtype", "name");
+  });
 
   // Filter recurring tasks that actually fall on this date
   const activeRecurring = recurringTasks.filter((task) => isTaskOnDate(task, date));
@@ -238,22 +237,21 @@ const getTasksForDate = async (userId: string, date: Date) => {
       status: completion ? completion.status : task.status,
       completionId: completion?._id || null,
       completionNotes: completion?.notes || null,
-      completionMetadata: completion?.metadata || null,
     };
   });
 
-  // 6. Group by type
+  // 6. Group by category
   const groupMap = new Map<
     string,
-    { type: any; tasks: typeof resolvedTasks }
+    { category: string; tasks: typeof resolvedTasks }
   >();
 
   for (const task of resolvedTasks) {
-    const typeId = task.type?._id?.toString() || "unknown";
-    if (!groupMap.has(typeId)) {
-      groupMap.set(typeId, { type: task.type, tasks: [] });
+    const cat = task.category || "unknown";
+    if (!groupMap.has(cat)) {
+      groupMap.set(cat, { category: cat, tasks: [] });
     }
-    groupMap.get(typeId)!.tasks.push(task);
+    groupMap.get(cat)!.tasks.push(task);
   }
 
   // 7. Build response with summaries
@@ -264,7 +262,7 @@ const getTasksForDate = async (userId: string, date: Date) => {
       in_progress: group.tasks.filter((t) => t.status === EntryStatus.InProgress).length,
       pending: group.tasks.filter((t) => t.status === EntryStatus.Pending).length,
     };
-    return { type: group.type, summary, tasks: group.tasks };
+    return { category: group.category, summary, tasks: group.tasks };
   });
 
   const overallSummary = {
@@ -351,12 +349,134 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
   }
 };
 
+// ---- Search ----
+
+export const searchEntries = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    const q = req.query.q as string;
+
+    if (!q || q.trim().length === 0) {
+      res.status(400).json({ message: "Search query 'q' is required" });
+      return;
+    }
+
+    const regex = new RegExp(q.trim(), "i");
+
+    const entries = await Entry.find({
+      userId,
+      $or: [
+        { title: regex },
+        { notes: regex },
+        { solution: regex },
+        { topic: regex },
+        { source: regex },
+        { tags: regex },
+      ],
+    }).sort({ updatedAt: -1 });
+
+    res.status(200).json(entries);
+  } catch (error) {
+    res.status(500).json({ message: "Error searching entries", error });
+  }
+};
+
+// ---- Tags ----
+
+export const getAllTags = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+
+    const result = await Entry.aggregate([
+      { $match: { userId } },
+      { $unwind: "$tags" },
+      { $group: { _id: "$tags", count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]);
+
+    const tags = result.map((r) => ({ tag: r._id, count: r.count }));
+
+    res.status(200).json(tags);
+  } catch (error) {
+    res.status(500).json({ message: "Error fetching tags", error });
+  }
+};
+
+// ---- Topics ----
+
+export const getAllTopics = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    const filter: Record<string, any> = { userId, topic: { $nin: [null, ""] } };
+    if (req.query.category) filter.category = req.query.category as string;
+
+    const result = await Entry.aggregate([
+      { $match: filter },
+      { $group: { _id: "$topic", count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]);
+
+    const topics = result.map((r) => ({ topic: r._id, count: r.count }));
+
+    res.status(200).json(topics);
+  } catch (error) {
+    res.status(500).json({ message: "Error fetching topics", error });
+  }
+};
+
+// ---- Sources ----
+
+export const getAllSources = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+
+    const result = await Entry.aggregate([
+      { $match: { userId, source: { $nin: [null, ""] } } },
+      { $group: { _id: "$source", count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]);
+
+    const sources = result.map((r) => ({ source: r._id, count: r.count }));
+
+    res.status(200).json(sources);
+  } catch (error) {
+    res.status(500).json({ message: "Error fetching sources", error });
+  }
+};
+
+// ---- Bulk Operations ----
+
+export const bulkDeleteEntries = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    const { ids } = req.body;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      res.status(400).json({ message: "ids must be a non-empty array" });
+      return;
+    }
+
+    // Delete entries and their associated completions
+    const [deleteResult] = await Promise.all([
+      Entry.deleteMany({ _id: { $in: ids }, userId }),
+      TaskCompletion.deleteMany({ entry: { $in: ids }, userId }),
+    ]);
+
+    res.status(200).json({
+      message: `Deleted ${deleteResult.deletedCount} entries`,
+      deletedCount: deleteResult.deletedCount,
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Error deleting entries", error });
+  }
+};
+
 // ---- Task Completion ----
 
 export const updateTaskStatus = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const { entry, date, status, notes, metadata } = req.body;
+    const { entry, date, status, notes } = req.body;
 
     if (!entry || !date || !status) {
       res.status(400).json({ message: "entry, date, and status are required" });
@@ -368,18 +488,6 @@ export const updateTaskStatus = async (req: AuthRequest, res: Response) => {
     if (!existingEntry) {
       res.status(404).json({ message: "Entry not found" });
       return;
-    }
-
-    // Validate metadata against the entry's type field definitions
-    if (metadata) {
-      const typeDoc = await Type.findById(existingEntry.type);
-      if (typeDoc && typeDoc.fields.length > 0) {
-        const { valid, errors } = validateMetadata(metadata, typeDoc.fields);
-        if (!valid) {
-          res.status(400).json({ message: "Metadata validation failed", errors });
-          return;
-        }
-      }
     }
 
     const { start, end } = getDayRange(new Date(date));
@@ -396,7 +504,6 @@ export const updateTaskStatus = async (req: AuthRequest, res: Response) => {
         date: new Date(date),
         status,
         notes,
-        metadata,
       },
       { upsert: true, new: true, runValidators: true }
     );

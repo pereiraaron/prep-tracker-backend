@@ -7,7 +7,6 @@ export interface ITaskCompletion extends Document {
   date: Date;
   status: EntryStatus;
   notes?: string;
-  metadata?: Map<string, any>;
   createdAt: Date;
   updatedAt: Date;
 }

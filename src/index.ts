@@ -1,10 +1,12 @@
 import express, { Express } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import swaggerUi from "swagger-ui-express";
 import { connectToDB } from "./db/connect";
-import typeRoutes from "./routes/type";
-import subtypeRoutes from "./routes/subtype";
+import swaggerSpec from "./swagger";
+import categoryRoutes from "./routes/category";
 import entryRoutes from "./routes/entry";
+import statsRoutes from "./routes/stats";
 
 dotenv.config();
 
@@ -18,10 +20,13 @@ const PORT = process.env.PORT || 7002;
 app.use(cors());
 app.use(express.json());
 
+// Swagger docs
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
 // Routes
-app.use("/api/types", typeRoutes);
-app.use("/api/subtypes", subtypeRoutes);
+app.use("/api/categories", categoryRoutes);
 app.use("/api/entries", entryRoutes);
+app.use("/api/stats", statsRoutes);
 
 // Health check route
 app.get("/", (_, res) => {

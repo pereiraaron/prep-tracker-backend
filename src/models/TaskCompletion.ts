@@ -25,11 +25,6 @@ const taskCompletionSchema = new Schema<ITaskCompletion>(
       type: String,
       trim: true,
     },
-    metadata: {
-      type: Map,
-      of: Schema.Types.Mixed,
-      default: new Map(),
-    },
   },
   {
     timestamps: true,

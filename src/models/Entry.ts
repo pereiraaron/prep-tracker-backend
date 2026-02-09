@@ -1,5 +1,5 @@
 import { Schema, model } from "mongoose";
-import { IEntry, EntryStatus, RecurrenceFrequency } from "../types";
+import { IEntry, EntryStatus, RecurrenceFrequency, PrepCategory, Difficulty } from "../types";
 
 const entrySchema = new Schema<IEntry>(
   {
@@ -12,19 +12,35 @@ const entrySchema = new Schema<IEntry>(
       $type: String,
       trim: true,
     },
+    solution: {
+      $type: String,
+      trim: true,
+    },
     status: {
       $type: String,
       enum: Object.values(EntryStatus),
       default: EntryStatus.Pending,
     },
-    type: {
-      $type: Schema.Types.ObjectId,
-      ref: "Type",
+    category: {
+      $type: String,
+      enum: Object.values(PrepCategory),
       required: true,
     },
-    subtype: {
-      $type: Schema.Types.ObjectId,
-      ref: "Subtype",
+    topic: {
+      $type: String,
+      trim: true,
+    },
+    difficulty: {
+      $type: String,
+      enum: Object.values(Difficulty),
+    },
+    source: {
+      $type: String,
+      trim: true,
+    },
+    url: {
+      $type: String,
+      trim: true,
     },
     tags: {
       $type: [String],
@@ -54,11 +70,6 @@ const entrySchema = new Schema<IEntry>(
     recurringEndDate: {
       $type: Date,
     },
-    metadata: {
-      $type: Map,
-      of: Schema.Types.Mixed,
-      default: new Map(),
-    },
   },
   {
     timestamps: true,
@@ -67,7 +78,8 @@ const entrySchema = new Schema<IEntry>(
 );
 
 entrySchema.index({ userId: 1 });
-entrySchema.index({ userId: 1, type: 1 });
+entrySchema.index({ userId: 1, category: 1 });
+entrySchema.index({ userId: 1, difficulty: 1 });
 entrySchema.index({ userId: 1, status: 1 });
 entrySchema.index({ userId: 1, deadline: 1 });
 entrySchema.index({ userId: 1, isRecurring: 1 });

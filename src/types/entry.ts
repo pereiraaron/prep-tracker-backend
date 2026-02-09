@@ -1,9 +1,16 @@
-import { Document, Types } from "mongoose";
+import { Document } from "mongoose";
+import { PrepCategory } from "./category";
 
 export enum EntryStatus {
   Pending = "pending",
   InProgress = "in_progress",
   Completed = "completed",
+}
+
+export enum Difficulty {
+  Easy = "easy",
+  Medium = "medium",
+  Hard = "hard",
 }
 
 export enum RecurrenceFrequency {
@@ -20,16 +27,19 @@ export interface IRecurrence {
 export interface IEntry extends Document {
   title: string;
   notes?: string;
+  solution?: string;
   status: EntryStatus;
-  type: Types.ObjectId;
-  subtype?: Types.ObjectId;
+  category: PrepCategory;
+  topic?: string;
+  difficulty?: Difficulty;
+  source?: string;
+  url?: string;
   tags: string[];
   userId: string;
   deadline: Date;
   isRecurring: boolean;
   recurrence?: IRecurrence;
   recurringEndDate?: Date;
-  metadata?: Map<string, any>;
   createdAt: Date;
   updatedAt: Date;
 }
