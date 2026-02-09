@@ -1,7 +1,6 @@
 import express, { Express } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import swaggerUi from "swagger-ui-express";
 import { connectToDB } from "./db/connect";
 import swaggerSpec from "./swagger";
 import categoryRoutes from "./routes/category";
@@ -21,7 +20,20 @@ app.use(cors());
 app.use(express.json());
 
 // Swagger docs
-app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+app.get("/api-docs/spec.json", (_, res) => {
+  res.status(200).json(swaggerSpec);
+});
+app.get("/api-docs", (_, res) => {
+  res.status(200).send(`<!DOCTYPE html>
+<html><head>
+<title>Prep Tracker API</title>
+<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+</head><body>
+<div id="swagger-ui"></div>
+<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script>SwaggerUIBundle({url:"/api-docs/spec.json",dom_id:"#swagger-ui"})</script>
+</body></html>`);
+});
 
 // Routes
 app.use("/api/categories", categoryRoutes);
