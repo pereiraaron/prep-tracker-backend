@@ -1,18 +1,17 @@
 import { isTaskOnDate, getDayRange } from "../recurrence";
-import { RecurrenceFrequency, EntryStatus } from "../../types";
+import { RecurrenceFrequency } from "../../types/task";
 import { PrepCategory } from "../../types/category";
 
-// Helper to build a minimal IEntry-like object for testing
-const makeEntry = (overrides: Record<string, any> = {}) =>
+// Helper to build a minimal ITask-like object for testing
+const makeTask = (overrides: Record<string, any> = {}) =>
   ({
-    title: "Test",
-    status: EntryStatus.Pending,
-    category: PrepCategory.DSA,
-    tags: [],
+    name: "Test",
     userId: "u1",
-    deadline: new Date("2025-01-06"), // Monday
+    category: PrepCategory.DSA,
+    targetQuestionCount: 3,
     isRecurring: true,
-    recurrence: { frequency: RecurrenceFrequency.Daily },
+    recurrence: { frequency: RecurrenceFrequency.Daily, startDate: new Date("2025-01-06") },
+    status: "active",
     ...overrides,
   }) as any;
 
@@ -55,144 +54,187 @@ describe("getDayRange", () => {
 
 describe("isTaskOnDate", () => {
   describe("boundary checks", () => {
-    it("returns false if the target date is before the deadline", () => {
-      const entry = makeEntry({ deadline: new Date("2025-01-10") });
-      expect(isTaskOnDate(entry, new Date("2025-01-09"))).toBe(false);
+    it("returns false if the target date is before the startDate", () => {
+      const task = makeTask({ recurrence: { frequency: RecurrenceFrequency.Daily, startDate: new Date("2025-01-10") } });
+      expect(isTaskOnDate(task, new Date("2025-01-09"))).toBe(false);
     });
 
-    it("returns true for the deadline date itself (daily)", () => {
-      const entry = makeEntry({
-        deadline: new Date("2025-01-10"),
-        recurrence: { frequency: RecurrenceFrequency.Daily },
+    it("returns true for the startDate itself (daily)", () => {
+      const task = makeTask({
+        recurrence: { frequency: RecurrenceFrequency.Daily, startDate: new Date("2025-01-10") },
       });
-      expect(isTaskOnDate(entry, new Date("2025-01-10"))).toBe(true);
+      expect(isTaskOnDate(task, new Date("2025-01-10"))).toBe(true);
     });
 
-    it("returns false if the target date is after recurringEndDate", () => {
-      const entry = makeEntry({
-        deadline: new Date("2025-01-01"),
-        recurringEndDate: new Date("2025-01-15"),
-        recurrence: { frequency: RecurrenceFrequency.Daily },
+    it("returns false if the target date is after endDate", () => {
+      const task = makeTask({
+        recurrence: { frequency: RecurrenceFrequency.Daily, startDate: new Date("2025-01-01") },
+        endDate: new Date("2025-01-15"),
       });
-      expect(isTaskOnDate(entry, new Date("2025-01-16"))).toBe(false);
+      expect(isTaskOnDate(task, new Date("2025-01-16"))).toBe(false);
     });
 
-    it("returns true on the recurringEndDate itself", () => {
-      const entry = makeEntry({
-        deadline: new Date("2025-01-01"),
-        recurringEndDate: new Date("2025-01-15"),
-        recurrence: { frequency: RecurrenceFrequency.Daily },
+    it("returns true on the endDate itself", () => {
+      const task = makeTask({
+        recurrence: { frequency: RecurrenceFrequency.Daily, startDate: new Date("2025-01-01") },
+        endDate: new Date("2025-01-15"),
       });
-      expect(isTaskOnDate(entry, new Date("2025-01-15"))).toBe(true);
+      expect(isTaskOnDate(task, new Date("2025-01-15"))).toBe(true);
     });
 
     it("returns false if recurrence is undefined", () => {
-      const entry = makeEntry({ recurrence: undefined });
-      expect(isTaskOnDate(entry, new Date("2025-01-10"))).toBe(false);
+      const task = makeTask({ recurrence: undefined });
+      expect(isTaskOnDate(task, new Date("2025-01-10"))).toBe(false);
     });
   });
 
   describe("daily recurrence", () => {
-    it("returns true for any date on or after deadline", () => {
-      const entry = makeEntry({
-        deadline: new Date("2025-01-01"),
-        recurrence: { frequency: RecurrenceFrequency.Daily },
+    it("returns true for any date on or after startDate", () => {
+      const task = makeTask({
+        recurrence: { frequency: RecurrenceFrequency.Daily, startDate: new Date("2025-01-01") },
       });
-      expect(isTaskOnDate(entry, new Date("2025-01-01"))).toBe(true);
-      expect(isTaskOnDate(entry, new Date("2025-02-15"))).toBe(true);
-      expect(isTaskOnDate(entry, new Date("2025-06-30"))).toBe(true);
+      expect(isTaskOnDate(task, new Date("2025-01-01"))).toBe(true);
+      expect(isTaskOnDate(task, new Date("2025-02-15"))).toBe(true);
+      expect(isTaskOnDate(task, new Date("2025-06-30"))).toBe(true);
     });
   });
 
   describe("weekly recurrence", () => {
-    it("returns true only on the same day of the week as the deadline", () => {
+    it("returns true only on the same day of the week as the startDate when no daysOfWeek specified", () => {
       // 2025-01-06 is a Monday
-      const entry = makeEntry({
-        deadline: new Date("2025-01-06"),
-        recurrence: { frequency: RecurrenceFrequency.Weekly },
+      const task = makeTask({
+        recurrence: { frequency: RecurrenceFrequency.Weekly, startDate: new Date("2025-01-06") },
       });
 
       // Next Monday
-      expect(isTaskOnDate(entry, new Date("2025-01-13"))).toBe(true);
+      expect(isTaskOnDate(task, new Date("2025-01-13"))).toBe(true);
       // Two weeks later Monday
-      expect(isTaskOnDate(entry, new Date("2025-01-20"))).toBe(true);
+      expect(isTaskOnDate(task, new Date("2025-01-20"))).toBe(true);
       // Tuesday
-      expect(isTaskOnDate(entry, new Date("2025-01-07"))).toBe(false);
+      expect(isTaskOnDate(task, new Date("2025-01-07"))).toBe(false);
       // Sunday
-      expect(isTaskOnDate(entry, new Date("2025-01-12"))).toBe(false);
+      expect(isTaskOnDate(task, new Date("2025-01-12"))).toBe(false);
     });
 
-    it("returns true on the deadline date itself", () => {
-      const entry = makeEntry({
-        deadline: new Date("2025-01-06"),
-        recurrence: { frequency: RecurrenceFrequency.Weekly },
+    it("returns true on the startDate itself", () => {
+      const task = makeTask({
+        recurrence: { frequency: RecurrenceFrequency.Weekly, startDate: new Date("2025-01-06") },
       });
-      expect(isTaskOnDate(entry, new Date("2025-01-06"))).toBe(true);
+      expect(isTaskOnDate(task, new Date("2025-01-06"))).toBe(true);
+    });
+
+    it("uses daysOfWeek when specified", () => {
+      const task = makeTask({
+        recurrence: {
+          frequency: RecurrenceFrequency.Weekly,
+          startDate: new Date("2025-01-06"),
+          daysOfWeek: [1, 3, 5], // Mon, Wed, Fri
+        },
+      });
+      // Monday
+      expect(isTaskOnDate(task, new Date("2025-01-13"))).toBe(true);
+      // Wednesday
+      expect(isTaskOnDate(task, new Date("2025-01-08"))).toBe(true);
+      // Friday
+      expect(isTaskOnDate(task, new Date("2025-01-10"))).toBe(true);
+      // Tuesday
+      expect(isTaskOnDate(task, new Date("2025-01-07"))).toBe(false);
+    });
+  });
+
+  describe("biweekly recurrence", () => {
+    it("returns true every 2 weeks on the same day as startDate", () => {
+      // 2025-01-06 is a Monday
+      const task = makeTask({
+        recurrence: { frequency: RecurrenceFrequency.Biweekly, startDate: new Date("2025-01-06") },
+      });
+
+      // Week 0 (startDate) - Monday
+      expect(isTaskOnDate(task, new Date("2025-01-06"))).toBe(true);
+      // Week 1 - Monday (odd week, should be false)
+      expect(isTaskOnDate(task, new Date("2025-01-13"))).toBe(false);
+      // Week 2 - Monday (even week, should be true)
+      expect(isTaskOnDate(task, new Date("2025-01-20"))).toBe(true);
+      // Week 3 - Monday (odd week, should be false)
+      expect(isTaskOnDate(task, new Date("2025-01-27"))).toBe(false);
+    });
+  });
+
+  describe("monthly recurrence", () => {
+    it("returns true on the same day of month as startDate", () => {
+      const task = makeTask({
+        recurrence: { frequency: RecurrenceFrequency.Monthly, startDate: new Date("2025-01-15") },
+      });
+
+      expect(isTaskOnDate(task, new Date("2025-01-15"))).toBe(true);
+      expect(isTaskOnDate(task, new Date("2025-02-15"))).toBe(true);
+      expect(isTaskOnDate(task, new Date("2025-03-15"))).toBe(true);
+      expect(isTaskOnDate(task, new Date("2025-01-16"))).toBe(false);
+      expect(isTaskOnDate(task, new Date("2025-02-14"))).toBe(false);
     });
   });
 
   describe("custom recurrence", () => {
-    it("returns true only on specified days of the week", () => {
+    it("returns true on specified days of the week when no interval", () => {
       // Mon=1, Wed=3, Fri=5
-      const entry = makeEntry({
-        deadline: new Date("2025-01-06"), // Monday
+      const task = makeTask({
         recurrence: {
           frequency: RecurrenceFrequency.Custom,
+          startDate: new Date("2025-01-06"),
           daysOfWeek: [1, 3, 5],
         },
       });
 
-      // Mon Jan 13
-      expect(isTaskOnDate(entry, new Date("2025-01-13"))).toBe(true);
-      // Wed Jan 8
-      expect(isTaskOnDate(entry, new Date("2025-01-08"))).toBe(true);
-      // Fri Jan 10
-      expect(isTaskOnDate(entry, new Date("2025-01-10"))).toBe(true);
-      // Tue Jan 7
-      expect(isTaskOnDate(entry, new Date("2025-01-07"))).toBe(false);
-      // Sat Jan 11
-      expect(isTaskOnDate(entry, new Date("2025-01-11"))).toBe(false);
+      expect(isTaskOnDate(task, new Date("2025-01-13"))).toBe(true); // Mon
+      expect(isTaskOnDate(task, new Date("2025-01-08"))).toBe(true); // Wed
+      expect(isTaskOnDate(task, new Date("2025-01-10"))).toBe(true); // Fri
+      expect(isTaskOnDate(task, new Date("2025-01-07"))).toBe(false); // Tue
+      expect(isTaskOnDate(task, new Date("2025-01-11"))).toBe(false); // Sat
+    });
+
+    it("returns true every N days when interval is specified", () => {
+      const task = makeTask({
+        recurrence: {
+          frequency: RecurrenceFrequency.Custom,
+          startDate: new Date("2025-01-01"),
+          interval: 3, // every 3 days
+        },
+      });
+
+      expect(isTaskOnDate(task, new Date("2025-01-01"))).toBe(true); // day 0
+      expect(isTaskOnDate(task, new Date("2025-01-02"))).toBe(false); // day 1
+      expect(isTaskOnDate(task, new Date("2025-01-03"))).toBe(false); // day 2
+      expect(isTaskOnDate(task, new Date("2025-01-04"))).toBe(true); // day 3
+      expect(isTaskOnDate(task, new Date("2025-01-07"))).toBe(true); // day 6
     });
 
     it("handles empty daysOfWeek array", () => {
-      const entry = makeEntry({
-        deadline: new Date("2025-01-06"),
+      const task = makeTask({
         recurrence: {
           frequency: RecurrenceFrequency.Custom,
+          startDate: new Date("2025-01-06"),
           daysOfWeek: [],
         },
       });
-      expect(isTaskOnDate(entry, new Date("2025-01-13"))).toBe(false);
-    });
-
-    it("handles undefined daysOfWeek", () => {
-      const entry = makeEntry({
-        deadline: new Date("2025-01-06"),
-        recurrence: {
-          frequency: RecurrenceFrequency.Custom,
-        },
-      });
-      expect(isTaskOnDate(entry, new Date("2025-01-13"))).toBe(false);
+      expect(isTaskOnDate(task, new Date("2025-01-13"))).toBe(false);
     });
   });
 
-  describe("no recurringEndDate", () => {
-    it("works indefinitely when recurringEndDate is not set", () => {
-      const entry = makeEntry({
-        deadline: new Date("2025-01-01"),
-        recurringEndDate: undefined,
-        recurrence: { frequency: RecurrenceFrequency.Daily },
+  describe("no endDate", () => {
+    it("works indefinitely when endDate is not set", () => {
+      const task = makeTask({
+        recurrence: { frequency: RecurrenceFrequency.Daily, startDate: new Date("2025-01-01") },
+        endDate: undefined,
       });
-      expect(isTaskOnDate(entry, new Date("2026-12-31"))).toBe(true);
+      expect(isTaskOnDate(task, new Date("2026-12-31"))).toBe(true);
     });
 
-    it("works when recurringEndDate is null", () => {
-      const entry = makeEntry({
-        deadline: new Date("2025-01-01"),
-        recurringEndDate: null,
-        recurrence: { frequency: RecurrenceFrequency.Daily },
+    it("works when endDate is null", () => {
+      const task = makeTask({
+        recurrence: { frequency: RecurrenceFrequency.Daily, startDate: new Date("2025-01-01") },
+        endDate: null,
       });
-      expect(isTaskOnDate(entry, new Date("2026-12-31"))).toBe(true);
+      expect(isTaskOnDate(task, new Date("2026-12-31"))).toBe(true);
     });
   });
 });
