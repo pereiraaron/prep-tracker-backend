@@ -3,8 +3,8 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { connectToDB } from "./db/connect";
 import swaggerSpec from "./swagger";
-import categoryRoutes from "./routes/category";
-import entryRoutes from "./routes/entry";
+import taskRoutes from "./routes/task";
+import questionRoutes from "./routes/question";
 import statsRoutes from "./routes/stats";
 
 dotenv.config();
@@ -36,8 +36,8 @@ app.get("/api-docs", (_, res) => {
 });
 
 // Routes
-app.use("/api/categories", categoryRoutes);
-app.use("/api/entries", entryRoutes);
+app.use("/api/tasks", taskRoutes);
+app.use("/api/questions", questionRoutes);
 app.use("/api/stats", statsRoutes);
 
 // Health check route

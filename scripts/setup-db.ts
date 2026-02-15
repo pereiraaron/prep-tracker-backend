@@ -11,7 +11,7 @@ async function setup() {
   const db = mongoose.connection.db!
   const existing = (await db.listCollections().toArray()).map((c) => c.name)
 
-  const collections = ["entries", "taskcompletions"]
+  const collections = ["tasks", "taskinstances", "questions"]
   for (const name of collections) {
     if (existing.includes(name)) {
       console.log("Already exists:", name)
@@ -21,21 +21,27 @@ async function setup() {
     }
   }
 
-  // Entries indexes
-  await db.collection("entries").createIndex({ userId: 1 })
-  await db.collection("entries").createIndex({ userId: 1, category: 1 })
-  await db.collection("entries").createIndex({ userId: 1, difficulty: 1 })
-  await db.collection("entries").createIndex({ userId: 1, status: 1 })
-  await db.collection("entries").createIndex({ userId: 1, deadline: 1 })
-  await db.collection("entries").createIndex({ userId: 1, isRecurring: 1 })
-  console.log("Indexes: entries (6)")
+  // Tasks indexes
+  await db.collection("tasks").createIndex({ userId: 1 })
+  await db.collection("tasks").createIndex({ userId: 1, category: 1 })
+  await db.collection("tasks").createIndex({ userId: 1, status: 1 })
+  await db.collection("tasks").createIndex({ userId: 1, isRecurring: 1 })
+  console.log("Indexes: tasks (4)")
 
-  // TaskCompletions indexes
+  // TaskInstances indexes
   await db
-    .collection("taskcompletions")
-    .createIndex({ entry: 1, userId: 1, date: 1 }, { unique: true })
-  await db.collection("taskcompletions").createIndex({ userId: 1, date: 1 })
-  console.log("Indexes: taskcompletions (2)")
+    .collection("taskinstances")
+    .createIndex({ task: 1, userId: 1, date: 1 }, { unique: true })
+  await db.collection("taskinstances").createIndex({ userId: 1, date: 1 })
+  await db.collection("taskinstances").createIndex({ userId: 1, status: 1 })
+  console.log("Indexes: taskinstances (3)")
+
+  // Questions indexes
+  await db.collection("questions").createIndex({ taskInstance: 1 })
+  await db.collection("questions").createIndex({ task: 1, userId: 1 })
+  await db.collection("questions").createIndex({ userId: 1, status: 1 })
+  await db.collection("questions").createIndex({ userId: 1, solvedAt: 1 })
+  console.log("Indexes: questions (4)")
 
   console.log("Done.")
   await mongoose.disconnect()

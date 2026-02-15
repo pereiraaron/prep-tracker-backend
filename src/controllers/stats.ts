@@ -1,34 +1,49 @@
 import { Response } from "express";
-import { Entry, TaskCompletion } from "../models";
-import { AuthRequest, EntryStatus, PrepCategory, Difficulty } from "../types";
-import { getDayRange } from "../utils/recurrence";
+import { Question } from "../models/Question";
+import { TaskInstance } from "../models/TaskInstance";
+import { AuthRequest } from "../types/auth";
+import { PrepCategory } from "../types/category";
+import { QuestionStatus, Difficulty } from "../types/question";
+import { TaskInstanceStatus } from "../types/taskInstance";
 
 /**
  * GET /api/stats/overview
- * Returns high-level counts: total entries, by status, by category, by difficulty.
+ * Returns high-level counts: total questions, by status, by category, by difficulty.
  */
 export const getOverview = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
 
-    const [byStatus, byCategory, byDifficulty, total] = await Promise.all([
-      Entry.aggregate([
-        { $match: { userId } },
+    const activeFilter = { userId, taskInstance: { $ne: null } };
+
+    const [byStatus, byCategory, byDifficulty, total, backlogCount] = await Promise.all([
+      Question.aggregate([
+        { $match: activeFilter },
         { $group: { _id: "$status", count: { $sum: 1 } } },
       ]),
-      Entry.aggregate([
+      TaskInstance.aggregate([
         { $match: { userId } },
+        {
+          $lookup: {
+            from: "questions",
+            localField: "_id",
+            foreignField: "taskInstance",
+            as: "questions",
+          },
+        },
+        { $unwind: "$questions" },
         { $group: { _id: "$category", count: { $sum: 1 } } },
       ]),
-      Entry.aggregate([
-        { $match: { userId, difficulty: { $ne: null } } },
+      Question.aggregate([
+        { $match: { ...activeFilter, difficulty: { $ne: null } } },
         { $group: { _id: "$difficulty", count: { $sum: 1 } } },
       ]),
-      Entry.countDocuments({ userId }),
+      Question.countDocuments(activeFilter),
+      Question.countDocuments({ userId, taskInstance: null }),
     ]);
 
     const statusMap: Record<string, number> = {};
-    for (const s of Object.values(EntryStatus)) statusMap[s] = 0;
+    for (const s of Object.values(QuestionStatus)) statusMap[s] = 0;
     for (const row of byStatus) statusMap[row._id] = row.count;
 
     const categoryMap: Record<string, number> = {};
@@ -41,6 +56,7 @@ export const getOverview = async (req: AuthRequest, res: Response) => {
 
     res.status(200).json({
       total,
+      backlogCount,
       byStatus: statusMap,
       byCategory: categoryMap,
       byDifficulty: difficultyMap,
@@ -51,18 +67,27 @@ export const getOverview = async (req: AuthRequest, res: Response) => {
 };
 
 /**
- * GET /api/stats/category-breakdown
- * Returns per-category stats with completion rates and difficulty distribution.
+ * GET /api/stats/categories
+ * Returns per-category stats with completion rates.
  */
 export const getCategoryBreakdown = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
 
-    const pipeline = await Entry.aggregate([
+    const pipeline = await TaskInstance.aggregate([
       { $match: { userId } },
       {
+        $lookup: {
+          from: "questions",
+          localField: "_id",
+          foreignField: "taskInstance",
+          as: "questions",
+        },
+      },
+      { $unwind: "$questions" },
+      {
         $group: {
-          _id: { category: "$category", status: "$status" },
+          _id: { category: "$category", status: "$questions.status" },
           count: { $sum: 1 },
         },
       },
@@ -70,11 +95,11 @@ export const getCategoryBreakdown = async (req: AuthRequest, res: Response) => {
 
     const categories: Record<
       string,
-      { total: number; completed: number; in_progress: number; pending: number }
+      { total: number; solved: number; in_progress: number; pending: number }
     > = {};
 
     for (const c of Object.values(PrepCategory)) {
-      categories[c] = { total: 0, completed: 0, in_progress: 0, pending: 0 };
+      categories[c] = { total: 0, solved: 0, in_progress: 0, pending: 0 };
     }
 
     for (const row of pipeline) {
@@ -82,15 +107,15 @@ export const getCategoryBreakdown = async (req: AuthRequest, res: Response) => {
       const status = row._id.status as string;
       if (!categories[cat]) continue;
       categories[cat].total += row.count;
-      if (status === EntryStatus.Completed) categories[cat].completed += row.count;
-      else if (status === EntryStatus.InProgress) categories[cat].in_progress += row.count;
+      if (status === QuestionStatus.Solved) categories[cat].solved += row.count;
+      else if (status === QuestionStatus.InProgress) categories[cat].in_progress += row.count;
       else categories[cat].pending += row.count;
     }
 
     const breakdown = Object.entries(categories).map(([category, stats]) => ({
       category,
       ...stats,
-      completionRate: stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0,
+      completionRate: stats.total > 0 ? Math.round((stats.solved / stats.total) * 100) : 0,
     }));
 
     res.status(200).json(breakdown);
@@ -100,15 +125,15 @@ export const getCategoryBreakdown = async (req: AuthRequest, res: Response) => {
 };
 
 /**
- * GET /api/stats/difficulty-breakdown
+ * GET /api/stats/difficulties
  * Returns per-difficulty stats with completion rates.
  */
 export const getDifficultyBreakdown = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
 
-    const pipeline = await Entry.aggregate([
-      { $match: { userId, difficulty: { $ne: null } } },
+    const pipeline = await Question.aggregate([
+      { $match: { userId, taskInstance: { $ne: null }, difficulty: { $ne: null } } },
       {
         $group: {
           _id: { difficulty: "$difficulty", status: "$status" },
@@ -119,11 +144,11 @@ export const getDifficultyBreakdown = async (req: AuthRequest, res: Response) =>
 
     const difficulties: Record<
       string,
-      { total: number; completed: number; in_progress: number; pending: number }
+      { total: number; solved: number; in_progress: number; pending: number }
     > = {};
 
     for (const d of Object.values(Difficulty)) {
-      difficulties[d] = { total: 0, completed: 0, in_progress: 0, pending: 0 };
+      difficulties[d] = { total: 0, solved: 0, in_progress: 0, pending: 0 };
     }
 
     for (const row of pipeline) {
@@ -131,15 +156,15 @@ export const getDifficultyBreakdown = async (req: AuthRequest, res: Response) =>
       const status = row._id.status as string;
       if (!difficulties[diff]) continue;
       difficulties[diff].total += row.count;
-      if (status === EntryStatus.Completed) difficulties[diff].completed += row.count;
-      else if (status === EntryStatus.InProgress) difficulties[diff].in_progress += row.count;
+      if (status === QuestionStatus.Solved) difficulties[diff].solved += row.count;
+      else if (status === QuestionStatus.InProgress) difficulties[diff].in_progress += row.count;
       else difficulties[diff].pending += row.count;
     }
 
     const breakdown = Object.entries(difficulties).map(([difficulty, stats]) => ({
       difficulty,
       ...stats,
-      completionRate: stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0,
+      completionRate: stats.total > 0 ? Math.round((stats.solved / stats.total) * 100) : 0,
     }));
 
     res.status(200).json(breakdown);
@@ -151,15 +176,14 @@ export const getDifficultyBreakdown = async (req: AuthRequest, res: Response) =>
 /**
  * GET /api/stats/streaks
  * Returns the current streak and longest streak of consecutive days
- * with at least one completed task.
+ * with at least one completed task instance.
  */
 export const getStreaks = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
 
-    // Get all completion dates (completed status only), sorted descending
-    const completions = await TaskCompletion.aggregate([
-      { $match: { userId, status: EntryStatus.Completed } },
+    const completions = await TaskInstance.aggregate([
+      { $match: { userId, status: TaskInstanceStatus.Completed } },
       {
         $group: {
           _id: {
@@ -194,13 +218,11 @@ export const getStreaks = async (req: AuthRequest, res: Response) => {
       if (currentRun > longestStreak) longestStreak = currentRun;
     }
 
-    // Current streak: count backwards from today
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     let currentStreak = 0;
     const checkDate = new Date(today);
 
-    // Allow checking from today or yesterday (if today isn't done yet)
     const latestCompletion = dates[dates.length - 1];
     const latestDate = new Date(latestCompletion);
     latestDate.setHours(0, 0, 0, 0);
@@ -210,10 +232,8 @@ export const getStreaks = async (req: AuthRequest, res: Response) => {
     );
 
     if (daysSinceLatest > 1) {
-      // Streak is broken
       currentStreak = 0;
     } else {
-      // Count backwards from the latest completion date
       const dateSet = new Set(dates);
       checkDate.setTime(latestDate.getTime());
 
@@ -235,7 +255,7 @@ export const getStreaks = async (req: AuthRequest, res: Response) => {
 
 /**
  * GET /api/stats/progress?days=30
- * Returns daily completion counts for the last N days (default 30).
+ * Returns daily solved question counts for the last N days (default 30).
  */
 export const getProgress = async (req: AuthRequest, res: Response) => {
   try {
@@ -246,26 +266,26 @@ export const getProgress = async (req: AuthRequest, res: Response) => {
     startDate.setDate(startDate.getDate() - days);
     startDate.setHours(0, 0, 0, 0);
 
-    const completions = await TaskCompletion.aggregate([
+    const solved = await Question.aggregate([
       {
         $match: {
           userId,
-          status: EntryStatus.Completed,
-          date: { $gte: startDate },
+          taskInstance: { $ne: null },
+          status: QuestionStatus.Solved,
+          solvedAt: { $gte: startDate },
         },
       },
       {
         $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$date" } },
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt" } },
           count: { $sum: 1 },
         },
       },
       { $sort: { _id: 1 } },
     ]);
 
-    // Fill in missing dates with 0
-    const result: Array<{ date: string; completed: number }> = [];
-    const completionMap = new Map(completions.map((c) => [c._id, c.count]));
+    const result: Array<{ date: string; solved: number }> = [];
+    const solvedMap = new Map(solved.map((s) => [s._id, s.count]));
     const current = new Date(startDate);
     const today = new Date();
     today.setHours(23, 59, 59, 999);
@@ -274,7 +294,7 @@ export const getProgress = async (req: AuthRequest, res: Response) => {
       const dateStr = current.toISOString().split("T")[0];
       result.push({
         date: dateStr,
-        completed: completionMap.get(dateStr) || 0,
+        solved: solvedMap.get(dateStr) || 0,
       });
       current.setDate(current.getDate() + 1);
     }

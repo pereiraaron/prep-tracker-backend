@@ -1,4 +1,5 @@
 export * from "./category";
-export * from "./entry";
-export * from "./taskCompletion";
+export * from "./task";
+export * from "./taskInstance";
+export * from "./question";
 export * from "./auth";
