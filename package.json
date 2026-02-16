@@ -12,8 +12,7 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage && rm -rf coverage",
-    "setup-db": "ts-node scripts/setup-db.ts",
-    "migrate": "ts-node scripts/migrate.ts"
+    "setup-db": "ts-node scripts/setup-db.ts"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
