@@ -54,7 +54,7 @@ const swaggerSpec = {
       Task: {
         type: "object" as const,
         properties: {
-          _id: { type: "string" as const },
+          id: { type: "string" as const },
           name: { type: "string" as const },
           userId: { type: "string" as const },
           category: { $ref: "#/components/schemas/PrepCategory" },
@@ -98,7 +98,7 @@ const swaggerSpec = {
       DailyTask: {
         type: "object" as const,
         properties: {
-          _id: { type: "string" as const },
+          id: { type: "string" as const },
           task: { type: "string" as const },
           userId: { type: "string" as const },
           date: { type: "string" as const, format: "date-time" },
@@ -116,7 +116,7 @@ const swaggerSpec = {
       Question: {
         type: "object" as const,
         properties: {
-          _id: { type: "string" as const },
+          id: { type: "string" as const },
           dailyTask: { type: "string" as const, nullable: true, description: "null for backlog questions" },
           task: { type: "string" as const, nullable: true, description: "null for backlog questions" },
           userId: { type: "string" as const },
@@ -129,6 +129,21 @@ const swaggerSpec = {
           source: { $ref: "#/components/schemas/QuestionSource" },
           url: { type: "string" as const },
           tags: { type: "array" as const, items: { type: "string" as const } },
+          starred: { type: "boolean" as const, default: false },
+          revisions: {
+            type: "array" as const,
+            items: {
+              type: "object" as const,
+              properties: {
+                notes: { type: "string" as const },
+                solution: { type: "string" as const },
+                editedAt: { type: "string" as const, format: "date-time" },
+              },
+            },
+          },
+          reviewCount: { type: "integer" as const, default: 0 },
+          nextReviewAt: { type: "string" as const, format: "date-time", nullable: true },
+          lastReviewedAt: { type: "string" as const, format: "date-time", nullable: true },
           solvedAt: { type: "string" as const, format: "date-time" },
           createdAt: { type: "string" as const, format: "date-time" },
           updatedAt: { type: "string" as const, format: "date-time" },
@@ -358,6 +373,7 @@ const swaggerSpec = {
           { name: "topic", in: "query", schema: { type: "string" as const } },
           { name: "source", in: "query", schema: { type: "string" as const } },
           { name: "tag", in: "query", schema: { type: "string" as const } },
+          { name: "starred", in: "query", schema: { type: "string" as const, enum: ["true"] }, description: "Filter starred questions only" },
           { name: "page", in: "query", schema: { type: "integer" as const, default: 1 } },
           { name: "limit", in: "query", schema: { type: "integer" as const, default: 50, maximum: 100 } },
         ],
@@ -401,6 +417,7 @@ const swaggerSpec = {
           { name: "topic", in: "query", schema: { type: "string" as const } },
           { name: "source", in: "query", schema: { type: "string" as const } },
           { name: "tag", in: "query", schema: { type: "string" as const } },
+          { name: "starred", in: "query", schema: { type: "string" as const, enum: ["true"] }, description: "Filter starred questions only" },
           { name: "page", in: "query", schema: { type: "integer" as const, default: 1 } },
           { name: "limit", in: "query", schema: { type: "integer" as const, default: 50, maximum: 100 } },
         ],
@@ -644,6 +661,131 @@ const swaggerSpec = {
         },
       },
     },
+    "/api/questions/{id}/reset": {
+      patch: {
+        tags: ["Questions"],
+        summary: "Reset a solved question back to pending",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
+        responses: {
+          "200": { description: "Reset question", content: { "application/json": { schema: { $ref: "#/components/schemas/Question" } } } },
+          "400": { description: "Question is not solved" },
+          "404": { description: "Not found" },
+        },
+      },
+    },
+    "/api/questions/{id}/star": {
+      patch: {
+        tags: ["Questions"],
+        summary: "Toggle starred status on a question",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
+        responses: {
+          "200": { description: "Updated question", content: { "application/json": { schema: { $ref: "#/components/schemas/Question" } } } },
+          "404": { description: "Not found" },
+        },
+      },
+    },
+    "/api/questions/{id}/review": {
+      patch: {
+        tags: ["Questions"],
+        summary: "Mark a solved question as reviewed (spaced repetition)",
+        description: "Increments reviewCount and schedules the next review at increasing intervals: 1, 3, 7, 14, 30, 60 days.",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
+        responses: {
+          "200": { description: "Reviewed question with updated nextReviewAt", content: { "application/json": { schema: { $ref: "#/components/schemas/Question" } } } },
+          "400": { description: "Question is not solved" },
+          "404": { description: "Not found" },
+        },
+      },
+    },
+    "/api/questions/due-for-review": {
+      get: {
+        tags: ["Questions"],
+        summary: "List solved questions due for spaced repetition review",
+        parameters: [
+          { name: "topic", in: "query", schema: { type: "string" as const }, description: "Filter by topic" },
+          { name: "difficulty", in: "query", schema: { $ref: "#/components/schemas/Difficulty" } },
+        ],
+        responses: {
+          "200": {
+            description: "Questions due for review",
+            content: { "application/json": { schema: { type: "array" as const, items: { $ref: "#/components/schemas/Question" } } } },
+          },
+        },
+      },
+    },
+    "/api/questions/{id}/revisions": {
+      get: {
+        tags: ["Questions"],
+        summary: "Get revision history for a question's notes and solution",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
+        responses: {
+          "200": {
+            description: "Current content and revision history",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object" as const,
+                  properties: {
+                    current: {
+                      type: "object" as const,
+                      properties: {
+                        notes: { type: "string" as const },
+                        solution: { type: "string" as const },
+                      },
+                    },
+                    revisions: {
+                      type: "array" as const,
+                      items: {
+                        type: "object" as const,
+                        properties: {
+                          notes: { type: "string" as const },
+                          solution: { type: "string" as const },
+                          editedAt: { type: "string" as const, format: "date-time" },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "404": { description: "Not found" },
+        },
+      },
+    },
+    "/api/questions/deduplicate": {
+      post: {
+        tags: ["Questions"],
+        summary: "Find and delete duplicate questions by title",
+        responses: {
+          "200": {
+            description: "Deduplication result",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object" as const,
+                  properties: {
+                    message: { type: "string" as const },
+                    deleted: { type: "integer" as const },
+                    groups: {
+                      type: "array" as const,
+                      items: {
+                        type: "object" as const,
+                        properties: {
+                          title: { type: "string" as const },
+                          kept: { type: "string" as const, description: "ID of the kept question" },
+                          deleted: { type: "array" as const, items: { type: "string" as const }, description: "IDs of deleted duplicates" },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
     "/api/questions/{id}/move": {
       patch: {
         tags: ["Questions"],
@@ -731,6 +873,38 @@ const swaggerSpec = {
                     type: "object" as const,
                     properties: {
                       difficulty: { type: "string" as const },
+                      total: { type: "integer" as const },
+                      solved: { type: "integer" as const },
+                      in_progress: { type: "integer" as const },
+                      pending: { type: "integer" as const },
+                      completionRate: { type: "integer" as const, description: "Percentage (0-100)" },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/stats/topics": {
+      get: {
+        tags: ["Stats"],
+        summary: "Get per-topic breakdown with completion rates",
+        parameters: [
+          { name: "category", in: "query", schema: { $ref: "#/components/schemas/PrepCategory" }, description: "Filter by category" },
+        ],
+        responses: {
+          "200": {
+            description: "Topic breakdown",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "array" as const,
+                  items: {
+                    type: "object" as const,
+                    properties: {
+                      topic: { type: "string" as const },
                       total: { type: "integer" as const },
                       solved: { type: "integer" as const },
                       in_progress: { type: "integer" as const },

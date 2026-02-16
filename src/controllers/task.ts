@@ -5,7 +5,18 @@ import { Question } from "../models/Question";
 import { AuthRequest } from "../types/auth";
 import { TaskStatus } from "../types/task";
 import { DailyTaskStatus } from "../types/dailyTask";
-import { isTaskOnDate, getDayRange } from "../utils/recurrence";
+import { isTaskOnDate, getDayRange, toISTDateString, toISTMidnight } from "../utils/recurrence";
+
+const computeSummary = (items: Array<{ status: string }>) => {
+  const summary = { total: items.length, completed: 0, incomplete: 0, in_progress: 0, pending: 0 };
+  for (const item of items) {
+    if (item.status === DailyTaskStatus.Completed) summary.completed++;
+    else if (item.status === DailyTaskStatus.Incomplete) summary.incomplete++;
+    else if (item.status === DailyTaskStatus.InProgress) summary.in_progress++;
+    else summary.pending++;
+  }
+  return summary;
+};
 
 // ---- CRUD ----
 
@@ -36,8 +47,7 @@ export const createTask = async (req: AuthRequest, res: Response) => {
       const startDate = recurrence?.startDate
         ? new Date(recurrence.startDate)
         : new Date();
-      const normalized = new Date(startDate);
-      normalized.setHours(0, 0, 0, 0);
+      const normalized = toISTMidnight(startDate);
 
       await DailyTask.create({
         task: task._id,
@@ -54,7 +64,7 @@ export const createTask = async (req: AuthRequest, res: Response) => {
 
     res.status(201).json(task);
   } catch (error) {
-    res.status(500).json({ message: "Error creating task", error });
+    res.status(500).json({ message: "Error creating task" });
   }
 };
 
@@ -83,7 +93,7 @@ export const getAllTasks = async (req: AuthRequest, res: Response) => {
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     });
   } catch (error) {
-    res.status(500).json({ message: "Error fetching tasks", error });
+    res.status(500).json({ message: "Error fetching tasks" });
   }
 };
 
@@ -99,7 +109,7 @@ export const getTaskById = async (req: AuthRequest, res: Response) => {
 
     res.status(200).json(task);
   } catch (error) {
-    res.status(500).json({ message: "Error fetching task", error });
+    res.status(500).json({ message: "Error fetching task" });
   }
 };
 
@@ -128,7 +138,7 @@ export const updateTask = async (req: AuthRequest, res: Response) => {
 
     res.status(200).json(task);
   } catch (error) {
-    res.status(500).json({ message: "Error updating task", error });
+    res.status(500).json({ message: "Error updating task" });
   }
 };
 
@@ -150,7 +160,7 @@ export const deleteTask = async (req: AuthRequest, res: Response) => {
 
     res.status(200).json({ message: "Task deleted" });
   } catch (error) {
-    res.status(500).json({ message: "Error deleting task", error });
+    res.status(500).json({ message: "Error deleting task" });
   }
 };
 
@@ -243,25 +253,11 @@ const materializeDailyTasksForDate = async (userId: string, date: Date) => {
 
   const groups = Array.from(groupMap.values()).map((group) => ({
     category: group.category,
-    summary: {
-      total: group.dailyTasks.length,
-      completed: group.dailyTasks.filter((i) => i.status === DailyTaskStatus.Completed).length,
-      incomplete: group.dailyTasks.filter((i) => i.status === DailyTaskStatus.Incomplete).length,
-      in_progress: group.dailyTasks.filter((i) => i.status === DailyTaskStatus.InProgress).length,
-      pending: group.dailyTasks.filter((i) => i.status === DailyTaskStatus.Pending).length,
-    },
+    summary: computeSummary(group.dailyTasks),
     dailyTasks: group.dailyTasks,
   }));
 
-  const overall = {
-    total: allDailyTasks.length,
-    completed: allDailyTasks.filter((i) => i.status === DailyTaskStatus.Completed).length,
-    incomplete: allDailyTasks.filter((i) => i.status === DailyTaskStatus.Incomplete).length,
-    in_progress: allDailyTasks.filter((i) => i.status === DailyTaskStatus.InProgress).length,
-    pending: allDailyTasks.filter((i) => i.status === DailyTaskStatus.Pending).length,
-  };
-
-  return { summary: overall, groups };
+  return { summary: computeSummary(allDailyTasks), groups };
 };
 
 export const getToday = async (req: AuthRequest, res: Response) => {
@@ -276,11 +272,11 @@ export const getToday = async (req: AuthRequest, res: Response) => {
     const result = await materializeDailyTasksForDate(userId, today);
 
     res.status(200).json({
-      date: today.toISOString().split("T")[0],
+      date: toISTDateString(today),
       ...result,
     });
   } catch (error) {
-    res.status(500).json({ message: "Error fetching today's tasks", error });
+    res.status(500).json({ message: "Error fetching today's tasks" });
   }
 };
 
@@ -297,7 +293,7 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
       const date = new Date(req.query.date as string);
       const result = await materializeDailyTasksForDate(userId, date);
       res.status(200).json({
-        date: date.toISOString().split("T")[0],
+        date: toISTDateString(date),
         ...result,
       });
       return;
@@ -330,7 +326,7 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
       // Group daily tasks by date
       const dayMap = new Map<string, any[]>();
       for (const dailyTask of dailyTasks) {
-        const dateStr = dailyTask.date.toISOString().split("T")[0];
+        const dateStr = toISTDateString(dailyTask.date);
         if (!dayMap.has(dateStr)) dayMap.set(dateStr, []);
         dayMap.get(dateStr)!.push({
           ...dailyTask.toObject(),
@@ -340,30 +336,20 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
 
       // Build response for each day
       const days: Array<{ date: string; summary: any; groups: any }> = [];
-      const current = new Date(from);
-      current.setHours(0, 0, 0, 0);
-      const endDate = new Date(to);
-      endDate.setHours(0, 0, 0, 0);
+      const current = toISTMidnight(from);
+      const endMs = toISTMidnight(to).getTime();
 
-      while (current <= endDate) {
-        const dateStr = current.toISOString().split("T")[0];
+      while (current.getTime() <= endMs) {
+        const dateStr = toISTDateString(current);
         const dayDailyTasks = dayMap.get(dateStr) || [];
 
-        const summary = {
-          total: dayDailyTasks.length,
-          completed: dayDailyTasks.filter((i) => i.status === DailyTaskStatus.Completed).length,
-          incomplete: dayDailyTasks.filter((i) => i.status === DailyTaskStatus.Incomplete).length,
-          in_progress: dayDailyTasks.filter((i) => i.status === DailyTaskStatus.InProgress).length,
-          pending: dayDailyTasks.filter((i) => i.status === DailyTaskStatus.Pending).length,
-        };
-
-        days.push({ date: dateStr, summary, groups: dayDailyTasks });
+        days.push({ date: dateStr, summary: computeSummary(dayDailyTasks), groups: dayDailyTasks });
         current.setDate(current.getDate() + 1);
       }
 
       res.status(200).json({
-        from: from.toISOString().split("T")[0],
-        to: to.toISOString().split("T")[0],
+        from: toISTDateString(from),
+        to: toISTDateString(to),
         days,
       });
       return;
@@ -371,7 +357,7 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
 
     res.status(400).json({ message: "Provide ?date= or ?from=&to= query parameters" });
   } catch (error) {
-    res.status(500).json({ message: "Error fetching task history", error });
+    res.status(500).json({ message: "Error fetching task history" });
   }
 };
 
@@ -394,6 +380,6 @@ export const getDailyTaskById = async (req: AuthRequest, res: Response) => {
       questions,
     });
   } catch (error) {
-    res.status(500).json({ message: "Error fetching daily task", error });
+    res.status(500).json({ message: "Error fetching daily task" });
   }
 };

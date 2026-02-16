@@ -5,6 +5,7 @@ import { AuthRequest } from "../types/auth";
 import { PrepCategory } from "../types/category";
 import { QuestionStatus, Difficulty } from "../types/question";
 import { DailyTaskStatus } from "../types/dailyTask";
+import { toISTDateString, toISTMidnight } from "../utils/recurrence";
 
 /**
  * GET /api/stats/overview
@@ -62,7 +63,7 @@ export const getOverview = async (req: AuthRequest, res: Response) => {
       byDifficulty: difficultyMap,
     });
   } catch (error) {
-    res.status(500).json({ message: "Error fetching overview stats", error });
+    res.status(500).json({ message: "Error fetching overview stats" });
   }
 };
 
@@ -120,7 +121,7 @@ export const getCategoryBreakdown = async (req: AuthRequest, res: Response) => {
 
     res.status(200).json(breakdown);
   } catch (error) {
-    res.status(500).json({ message: "Error fetching category breakdown", error });
+    res.status(500).json({ message: "Error fetching category breakdown" });
   }
 };
 
@@ -169,7 +170,70 @@ export const getDifficultyBreakdown = async (req: AuthRequest, res: Response) =>
 
     res.status(200).json(breakdown);
   } catch (error) {
-    res.status(500).json({ message: "Error fetching difficulty breakdown", error });
+    res.status(500).json({ message: "Error fetching difficulty breakdown" });
+  }
+};
+
+/**
+ * GET /api/stats/topics
+ * Returns per-topic breakdown with completion rates.
+ */
+export const getTopicBreakdown = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+
+    const matchFilter: Record<string, any> = {
+      userId,
+      dailyTask: { $ne: null },
+      topic: { $nin: [null, ""] },
+    };
+
+    if (req.query.category) {
+      const dailyTasks = await DailyTask.find({
+        userId,
+        category: req.query.category as string,
+      }).select("_id");
+      matchFilter.dailyTask = { $in: dailyTasks.map((d) => d._id) };
+    }
+
+    const pipeline = await Question.aggregate([
+      { $match: matchFilter },
+      {
+        $group: {
+          _id: { topic: "$topic", status: "$status" },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const topics: Record<
+      string,
+      { total: number; solved: number; in_progress: number; pending: number }
+    > = {};
+
+    for (const row of pipeline) {
+      const topic = row._id.topic as string;
+      const status = row._id.status as string;
+      if (!topics[topic]) {
+        topics[topic] = { total: 0, solved: 0, in_progress: 0, pending: 0 };
+      }
+      topics[topic].total += row.count;
+      if (status === QuestionStatus.Solved) topics[topic].solved += row.count;
+      else if (status === QuestionStatus.InProgress) topics[topic].in_progress += row.count;
+      else topics[topic].pending += row.count;
+    }
+
+    const breakdown = Object.entries(topics)
+      .map(([topic, stats]) => ({
+        topic,
+        ...stats,
+        completionRate: stats.total > 0 ? Math.round((stats.solved / stats.total) * 100) : 0,
+      }))
+      .sort((a, b) => b.total - a.total);
+
+    res.status(200).json(breakdown);
+  } catch (error) {
+    res.status(500).json({ message: "Error fetching topic breakdown" });
   }
 };
 
@@ -218,16 +282,14 @@ export const getStreaks = async (req: AuthRequest, res: Response) => {
       if (currentRun > longestStreak) longestStreak = currentRun;
     }
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const today = toISTMidnight(new Date());
     let currentStreak = 0;
     const checkDate = new Date(today);
 
     const latestCompletion = dates[dates.length - 1];
-    const latestDate = new Date(latestCompletion);
-    latestDate.setHours(0, 0, 0, 0);
+    const latestDate = new Date(`${latestCompletion}T00:00:00.000+05:30`);
 
-    const daysSinceLatest = Math.floor(
+    const daysSinceLatest = Math.round(
       (today.getTime() - latestDate.getTime()) / (1000 * 60 * 60 * 24)
     );
 
@@ -237,7 +299,7 @@ export const getStreaks = async (req: AuthRequest, res: Response) => {
       const dateSet = new Set(dates);
       checkDate.setTime(latestDate.getTime());
 
-      while (dateSet.has(checkDate.toISOString().split("T")[0])) {
+      while (dateSet.has(toISTDateString(checkDate))) {
         currentStreak++;
         checkDate.setDate(checkDate.getDate() - 1);
       }
@@ -249,7 +311,7 @@ export const getStreaks = async (req: AuthRequest, res: Response) => {
       totalActiveDays: dates.length,
     });
   } catch (error) {
-    res.status(500).json({ message: "Error fetching streak stats", error });
+    res.status(500).json({ message: "Error fetching streak stats" });
   }
 };
 
@@ -262,9 +324,9 @@ export const getProgress = async (req: AuthRequest, res: Response) => {
     const userId = req.user?.id;
     const days = parseInt(req.query.days as string) || 30;
 
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
-    startDate.setHours(0, 0, 0, 0);
+    const now = new Date();
+    now.setDate(now.getDate() - days);
+    const startDate = toISTMidnight(now);
 
     const solved = await Question.aggregate([
       {
@@ -287,20 +349,20 @@ export const getProgress = async (req: AuthRequest, res: Response) => {
     const result: Array<{ date: string; solved: number }> = [];
     const solvedMap = new Map(solved.map((s) => [s._id, s.count]));
     const current = new Date(startDate);
-    const today = new Date();
-    today.setHours(23, 59, 59, 999);
+    const todayStr = toISTDateString(new Date());
 
-    while (current <= today) {
-      const dateStr = current.toISOString().split("T")[0];
+    let dateStr = toISTDateString(current);
+    while (dateStr <= todayStr) {
       result.push({
         date: dateStr,
         solved: solvedMap.get(dateStr) || 0,
       });
       current.setDate(current.getDate() + 1);
+      dateStr = toISTDateString(current);
     }
 
     res.status(200).json(result);
   } catch (error) {
-    res.status(500).json({ message: "Error fetching progress stats", error });
+    res.status(500).json({ message: "Error fetching progress stats" });
   }
 };
