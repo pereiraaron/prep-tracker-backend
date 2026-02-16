@@ -7,15 +7,21 @@ import {
   updateQuestion,
   deleteQuestion,
   solveQuestion,
+  resetQuestion,
+  toggleStarred,
+  reviewQuestion,
+  getDueForReview,
+  getRevisions,
   searchQuestions,
   getAllTags,
   getAllTopics,
   getAllSources,
   bulkDeleteQuestions,
+  deduplicateQuestions,
   createBacklogQuestion,
   getBacklogQuestions,
-  moveToTaskInstance,
-  bulkMoveToTaskInstance,
+  moveToDailyTask,
+  bulkMoveToDailyTask,
 } from "../controllers/question";
 
 const router = Router();
@@ -26,7 +32,9 @@ router.get("/tags", authenticate, getAllTags);
 router.get("/topics", authenticate, getAllTopics);
 router.get("/sources", authenticate, getAllSources);
 router.post("/bulk-delete", authenticate, bulkDeleteQuestions);
-router.post("/bulk-move", authenticate, bulkMoveToTaskInstance);
+router.post("/bulk-move", authenticate, bulkMoveToDailyTask);
+router.post("/deduplicate", authenticate, deduplicateQuestions);
+router.get("/due-for-review", authenticate, getDueForReview);
 router.route("/backlog")
   .get(authenticate, getBacklogQuestions)
   .post(authenticate, createBacklogQuestion);
@@ -34,7 +42,11 @@ router.route("/backlog")
 router.route("/").get(authenticate, getAllQuestions).post(authenticate, createQuestion);
 
 router.patch("/:id/solve", authenticate, solveQuestion);
-router.patch("/:id/move", authenticate, moveToTaskInstance);
+router.patch("/:id/reset", authenticate, resetQuestion);
+router.patch("/:id/star", authenticate, toggleStarred);
+router.patch("/:id/review", authenticate, reviewQuestion);
+router.patch("/:id/move", authenticate, moveToDailyTask);
+router.get("/:id/revisions", authenticate, getRevisions);
 
 router
   .route("/:id")

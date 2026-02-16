@@ -57,7 +57,6 @@ const taskSchema = new Schema<ITask>(
   }
 );
 
-taskSchema.index({ userId: 1 });
 taskSchema.index({ userId: 1, category: 1 });
 taskSchema.index({ userId: 1, status: 1 });
 taskSchema.index({ userId: 1, isRecurring: 1 });

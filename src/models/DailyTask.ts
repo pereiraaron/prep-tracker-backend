@@ -1,7 +1,7 @@
 import { Schema, model } from "mongoose";
-import { ITaskInstance, TaskInstanceStatus } from "../types/taskInstance";
+import { IDailyTask, DailyTaskStatus } from "../types/dailyTask";
 
-const taskInstanceSchema = new Schema<ITaskInstance>(
+const dailyTaskSchema = new Schema<IDailyTask>(
   {
     task: {
       type: Schema.Types.ObjectId,
@@ -38,8 +38,8 @@ const taskInstanceSchema = new Schema<ITaskInstance>(
     },
     status: {
       type: String,
-      enum: Object.values(TaskInstanceStatus),
-      default: TaskInstanceStatus.Pending,
+      enum: Object.values(DailyTaskStatus),
+      default: DailyTaskStatus.Pending,
     },
   },
   {
@@ -47,8 +47,8 @@ const taskInstanceSchema = new Schema<ITaskInstance>(
   }
 );
 
-taskInstanceSchema.index({ task: 1, userId: 1, date: 1 }, { unique: true });
-taskInstanceSchema.index({ userId: 1, date: 1 });
-taskInstanceSchema.index({ userId: 1, status: 1 });
+dailyTaskSchema.index({ task: 1, userId: 1, date: 1 }, { unique: true });
+dailyTaskSchema.index({ userId: 1, date: 1 });
+dailyTaskSchema.index({ userId: 1, status: 1 });
 
-export const TaskInstance = model("TaskInstance", taskInstanceSchema);
+export const DailyTask = model("DailyTask", dailyTaskSchema, "taskinstances");

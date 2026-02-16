@@ -1,3 +1,3 @@
 export * from "./Task";
-export * from "./TaskInstance";
+export * from "./DailyTask";
 export * from "./Question";

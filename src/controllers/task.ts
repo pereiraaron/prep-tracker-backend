@@ -1,11 +1,22 @@
 import { Response } from "express";
 import { Task } from "../models/Task";
-import { TaskInstance } from "../models/TaskInstance";
+import { DailyTask } from "../models/DailyTask";
 import { Question } from "../models/Question";
 import { AuthRequest } from "../types/auth";
 import { TaskStatus } from "../types/task";
-import { TaskInstanceStatus } from "../types/taskInstance";
-import { isTaskOnDate, getDayRange } from "../utils/recurrence";
+import { DailyTaskStatus } from "../types/dailyTask";
+import { isTaskOnDate, getDayRange, toISTDateString, toISTMidnight } from "../utils/recurrence";
+
+const computeSummary = (items: Array<{ status: string }>) => {
+  const summary = { total: items.length, completed: 0, incomplete: 0, in_progress: 0, pending: 0 };
+  for (const item of items) {
+    if (item.status === DailyTaskStatus.Completed) summary.completed++;
+    else if (item.status === DailyTaskStatus.Incomplete) summary.incomplete++;
+    else if (item.status === DailyTaskStatus.InProgress) summary.in_progress++;
+    else summary.pending++;
+  }
+  return summary;
+};
 
 // ---- CRUD ----
 
@@ -31,15 +42,14 @@ export const createTask = async (req: AuthRequest, res: Response) => {
       endDate,
     });
 
-    // For one-time tasks, immediately create a TaskInstance
+    // For one-time tasks, immediately create a DailyTask
     if (!isRecurring) {
       const startDate = recurrence?.startDate
         ? new Date(recurrence.startDate)
         : new Date();
-      const normalized = new Date(startDate);
-      normalized.setHours(0, 0, 0, 0);
+      const normalized = toISTMidnight(startDate);
 
-      await TaskInstance.create({
+      await DailyTask.create({
         task: task._id,
         userId,
         date: normalized,
@@ -48,13 +58,13 @@ export const createTask = async (req: AuthRequest, res: Response) => {
         targetQuestionCount: task.targetQuestionCount,
         addedQuestionCount: 0,
         solvedQuestionCount: 0,
-        status: TaskInstanceStatus.Pending,
+        status: DailyTaskStatus.Pending,
       });
     }
 
     res.status(201).json(task);
   } catch (error) {
-    res.status(500).json({ message: "Error creating task", error });
+    res.status(500).json({ message: "Error creating task" });
   }
 };
 
@@ -83,7 +93,7 @@ export const getAllTasks = async (req: AuthRequest, res: Response) => {
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     });
   } catch (error) {
-    res.status(500).json({ message: "Error fetching tasks", error });
+    res.status(500).json({ message: "Error fetching tasks" });
   }
 };
 
@@ -99,7 +109,7 @@ export const getTaskById = async (req: AuthRequest, res: Response) => {
 
     res.status(200).json(task);
   } catch (error) {
-    res.status(500).json({ message: "Error fetching task", error });
+    res.status(500).json({ message: "Error fetching task" });
   }
 };
 
@@ -128,7 +138,7 @@ export const updateTask = async (req: AuthRequest, res: Response) => {
 
     res.status(200).json(task);
   } catch (error) {
-    res.status(500).json({ message: "Error updating task", error });
+    res.status(500).json({ message: "Error updating task" });
   }
 };
 
@@ -142,37 +152,34 @@ export const deleteTask = async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    // Clean up all instances and questions
-    const instances = await TaskInstance.find({ task: task._id, userId });
-    const instanceIds = instances.map((i) => i._id);
-
+    // Clean up all daily tasks and questions
     await Promise.all([
-      TaskInstance.deleteMany({ task: task._id, userId }),
+      DailyTask.deleteMany({ task: task._id, userId }),
       Question.deleteMany({ task: task._id, userId }),
     ]);
 
     res.status(200).json({ message: "Task deleted" });
   } catch (error) {
-    res.status(500).json({ message: "Error deleting task", error });
+    res.status(500).json({ message: "Error deleting task" });
   }
 };
 
 // ---- Scheduling ----
 
 /**
- * Materializes TaskInstances for the given date and returns them with questions.
+ * Materializes DailyTasks for the given date and returns them with questions.
  */
-const materializeInstancesForDate = async (userId: string, date: Date) => {
+const materializeDailyTasksForDate = async (userId: string, date: Date) => {
   const { start, end } = getDayRange(date);
 
-  // 1. Get already-materialized instances for this date
-  const existingInstances = await TaskInstance.find({
+  // 1. Get already-materialized daily tasks for this date
+  const existingDailyTasks = await DailyTask.find({
     userId,
     date: { $gte: start, $lte: end },
   });
 
   const materializedTaskIds = new Set(
-    existingInstances.map((i) => i.task.toString())
+    existingDailyTasks.map((i) => i.task.toString())
   );
 
   // 2. Find active recurring tasks that should fire today
@@ -188,13 +195,13 @@ const materializeInstancesForDate = async (userId: string, date: Date) => {
     ],
   });
 
-  // 3. Materialize missing instances
-  const newInstances = [];
+  // 3. Materialize missing daily tasks
+  const newDailyTasks = [];
   for (const task of recurringTasks) {
     if (materializedTaskIds.has(task._id.toString())) continue;
     if (!isTaskOnDate(task, date)) continue;
 
-    const instance = await TaskInstance.findOneAndUpdate(
+    const dailyTask = await DailyTask.findOneAndUpdate(
       {
         task: task._id,
         userId,
@@ -210,61 +217,47 @@ const materializeInstancesForDate = async (userId: string, date: Date) => {
           targetQuestionCount: task.targetQuestionCount,
           addedQuestionCount: 0,
           solvedQuestionCount: 0,
-          status: TaskInstanceStatus.Pending,
+          status: DailyTaskStatus.Pending,
         },
       },
       { upsert: true, new: true }
     );
-    newInstances.push(instance);
+    newDailyTasks.push(dailyTask);
   }
 
-  // 4. Combine all instances
-  const allInstances = [...existingInstances, ...newInstances];
+  // 4. Combine all daily tasks
+  const allDailyTasks = [...existingDailyTasks, ...newDailyTasks];
 
-  // 5. Fetch questions for all instances
-  const instanceIds = allInstances.map((i) => i._id);
-  const questions = await Question.find({ taskInstance: { $in: instanceIds } });
+  // 5. Fetch questions for all daily tasks
+  const dailyTaskIds = allDailyTasks.map((i) => i._id);
+  const questions = await Question.find({ dailyTask: { $in: dailyTaskIds } });
 
-  const questionsByInstance = new Map<string, typeof questions>();
+  const questionsByDailyTask = new Map<string, typeof questions>();
   for (const q of questions) {
-    const key = q.taskInstance!.toString();
-    if (!questionsByInstance.has(key)) questionsByInstance.set(key, []);
-    questionsByInstance.get(key)!.push(q);
+    const key = q.dailyTask!.toString();
+    if (!questionsByDailyTask.has(key)) questionsByDailyTask.set(key, []);
+    questionsByDailyTask.get(key)!.push(q);
   }
 
   // 6. Build response grouped by category
-  const groupMap = new Map<string, { category: string; instances: any[] }>();
+  const groupMap = new Map<string, { category: string; dailyTasks: any[] }>();
 
-  for (const instance of allInstances) {
-    const cat = instance.category || "unknown";
-    if (!groupMap.has(cat)) groupMap.set(cat, { category: cat, instances: [] });
-    groupMap.get(cat)!.instances.push({
-      ...instance.toObject(),
-      questions: questionsByInstance.get(instance._id.toString()) || [],
+  for (const dailyTask of allDailyTasks) {
+    const cat = dailyTask.category || "unknown";
+    if (!groupMap.has(cat)) groupMap.set(cat, { category: cat, dailyTasks: [] });
+    groupMap.get(cat)!.dailyTasks.push({
+      ...dailyTask.toObject(),
+      questions: questionsByDailyTask.get(dailyTask._id.toString()) || [],
     });
   }
 
   const groups = Array.from(groupMap.values()).map((group) => ({
     category: group.category,
-    summary: {
-      total: group.instances.length,
-      completed: group.instances.filter((i) => i.status === TaskInstanceStatus.Completed).length,
-      incomplete: group.instances.filter((i) => i.status === TaskInstanceStatus.Incomplete).length,
-      in_progress: group.instances.filter((i) => i.status === TaskInstanceStatus.InProgress).length,
-      pending: group.instances.filter((i) => i.status === TaskInstanceStatus.Pending).length,
-    },
-    instances: group.instances,
+    summary: computeSummary(group.dailyTasks),
+    dailyTasks: group.dailyTasks,
   }));
 
-  const overall = {
-    total: allInstances.length,
-    completed: allInstances.filter((i) => i.status === TaskInstanceStatus.Completed).length,
-    incomplete: allInstances.filter((i) => i.status === TaskInstanceStatus.Incomplete).length,
-    in_progress: allInstances.filter((i) => i.status === TaskInstanceStatus.InProgress).length,
-    pending: allInstances.filter((i) => i.status === TaskInstanceStatus.Pending).length,
-  };
-
-  return { summary: overall, groups };
+  return { summary: computeSummary(allDailyTasks), groups };
 };
 
 export const getToday = async (req: AuthRequest, res: Response) => {
@@ -276,14 +269,14 @@ export const getToday = async (req: AuthRequest, res: Response) => {
     }
 
     const today = new Date();
-    const result = await materializeInstancesForDate(userId, today);
+    const result = await materializeDailyTasksForDate(userId, today);
 
     res.status(200).json({
-      date: today.toISOString().split("T")[0],
+      date: toISTDateString(today),
       ...result,
     });
   } catch (error) {
-    res.status(500).json({ message: "Error fetching today's tasks", error });
+    res.status(500).json({ message: "Error fetching today's tasks" });
   }
 };
 
@@ -298,9 +291,9 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
     // Single date query
     if (req.query.date) {
       const date = new Date(req.query.date as string);
-      const result = await materializeInstancesForDate(userId, date);
+      const result = await materializeDailyTasksForDate(userId, date);
       res.status(200).json({
-        date: date.toISOString().split("T")[0],
+        date: toISTDateString(date),
         ...result,
       });
       return;
@@ -313,60 +306,50 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
       const { start: rangeStart } = getDayRange(from);
       const { end: rangeEnd } = getDayRange(to);
 
-      // Batch query all instances in the range
-      const instances = await TaskInstance.find({
+      // Batch query all daily tasks in the range
+      const dailyTasks = await DailyTask.find({
         userId,
         date: { $gte: rangeStart, $lte: rangeEnd },
       });
 
-      // Fetch all questions for these instances
-      const instanceIds = instances.map((i) => i._id);
-      const questions = await Question.find({ taskInstance: { $in: instanceIds } });
+      // Fetch all questions for these daily tasks
+      const dailyTaskIds = dailyTasks.map((i) => i._id);
+      const questions = await Question.find({ dailyTask: { $in: dailyTaskIds } });
 
-      const questionsByInstance = new Map<string, typeof questions>();
+      const questionsByDailyTask = new Map<string, typeof questions>();
       for (const q of questions) {
-        const key = q.taskInstance!.toString();
-        if (!questionsByInstance.has(key)) questionsByInstance.set(key, []);
-        questionsByInstance.get(key)!.push(q);
+        const key = q.dailyTask!.toString();
+        if (!questionsByDailyTask.has(key)) questionsByDailyTask.set(key, []);
+        questionsByDailyTask.get(key)!.push(q);
       }
 
-      // Group instances by date
+      // Group daily tasks by date
       const dayMap = new Map<string, any[]>();
-      for (const instance of instances) {
-        const dateStr = instance.date.toISOString().split("T")[0];
+      for (const dailyTask of dailyTasks) {
+        const dateStr = toISTDateString(dailyTask.date);
         if (!dayMap.has(dateStr)) dayMap.set(dateStr, []);
         dayMap.get(dateStr)!.push({
-          ...instance.toObject(),
-          questions: questionsByInstance.get(instance._id.toString()) || [],
+          ...dailyTask.toObject(),
+          questions: questionsByDailyTask.get(dailyTask._id.toString()) || [],
         });
       }
 
       // Build response for each day
       const days: Array<{ date: string; summary: any; groups: any }> = [];
-      const current = new Date(from);
-      current.setHours(0, 0, 0, 0);
-      const endDate = new Date(to);
-      endDate.setHours(0, 0, 0, 0);
+      const current = toISTMidnight(from);
+      const endMs = toISTMidnight(to).getTime();
 
-      while (current <= endDate) {
-        const dateStr = current.toISOString().split("T")[0];
-        const dayInstances = dayMap.get(dateStr) || [];
+      while (current.getTime() <= endMs) {
+        const dateStr = toISTDateString(current);
+        const dayDailyTasks = dayMap.get(dateStr) || [];
 
-        const summary = {
-          total: dayInstances.length,
-          completed: dayInstances.filter((i) => i.status === TaskInstanceStatus.Completed).length,
-          incomplete: dayInstances.filter((i) => i.status === TaskInstanceStatus.Incomplete).length,
-          in_progress: dayInstances.filter((i) => i.status === TaskInstanceStatus.InProgress).length,
-          pending: dayInstances.filter((i) => i.status === TaskInstanceStatus.Pending).length,
-        };
-
-        days.push({ date: dateStr, summary, groups: dayInstances });
+        days.push({ date: dateStr, summary: computeSummary(dayDailyTasks), groups: dayDailyTasks });
         current.setDate(current.getDate() + 1);
       }
 
       res.status(200).json({
-        from: from.toISOString().split("T")[0],
-        to: to.toISOString().split("T")[0],
+        from: toISTDateString(from),
+        to: toISTDateString(to),
         days,
       });
       return;
@@ -374,29 +357,29 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
 
     res.status(400).json({ message: "Provide ?date= or ?from=&to= query parameters" });
   } catch (error) {
-    res.status(500).json({ message: "Error fetching task history", error });
+    res.status(500).json({ message: "Error fetching task history" });
   }
 };
 
-// ---- Instance detail ----
+// ---- Daily task detail ----
 
-export const getInstanceById = async (req: AuthRequest, res: Response) => {
+export const getDailyTaskById = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const instance = await TaskInstance.findOne({ _id: req.params.id, userId });
+    const dailyTask = await DailyTask.findOne({ _id: req.params.id, userId });
 
-    if (!instance) {
-      res.status(404).json({ message: "Task instance not found" });
+    if (!dailyTask) {
+      res.status(404).json({ message: "Daily task not found" });
       return;
     }
 
-    const questions = await Question.find({ taskInstance: instance._id });
+    const questions = await Question.find({ dailyTask: dailyTask._id });
 
     res.status(200).json({
-      ...instance.toObject(),
+      ...dailyTask.toObject(),
       questions,
     });
   } catch (error) {
-    res.status(500).json({ message: "Error fetching task instance", error });
+    res.status(500).json({ message: "Error fetching daily task" });
   }
 };

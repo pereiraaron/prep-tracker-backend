@@ -18,8 +18,16 @@ export enum QuestionSource {
   Other = "other",
 }
 
+export interface IRevision {
+  notes?: string;
+  solution?: string;
+  editedAt: Date;
+}
+
+export const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 60];
+
 export interface IQuestion extends Document {
-  taskInstance: Types.ObjectId | null;
+  dailyTask: Types.ObjectId | null;
   task: Types.ObjectId | null;
   userId: string;
   title: string;
@@ -31,6 +39,11 @@ export interface IQuestion extends Document {
   source?: QuestionSource;
   url?: string;
   tags: string[];
+  starred: boolean;
+  revisions: IRevision[];
+  reviewCount: number;
+  nextReviewAt?: Date;
+  lastReviewedAt?: Date;
   solvedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
