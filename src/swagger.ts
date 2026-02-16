@@ -31,7 +31,7 @@ const swaggerSpec = {
         type: "string" as const,
         enum: ["active", "completed"],
       },
-      TaskInstanceStatus: {
+      DailyTaskStatus: {
         type: "string" as const,
         enum: ["pending", "incomplete", "in_progress", "completed"],
       },
@@ -95,7 +95,7 @@ const swaggerSpec = {
           endDate: { type: "string" as const, format: "date-time" },
         },
       },
-      TaskInstance: {
+      DailyTask: {
         type: "object" as const,
         properties: {
           _id: { type: "string" as const },
@@ -107,7 +107,7 @@ const swaggerSpec = {
           targetQuestionCount: { type: "integer" as const },
           addedQuestionCount: { type: "integer" as const },
           solvedQuestionCount: { type: "integer" as const },
-          status: { $ref: "#/components/schemas/TaskInstanceStatus" },
+          status: { $ref: "#/components/schemas/DailyTaskStatus" },
           questions: { type: "array" as const, items: { $ref: "#/components/schemas/Question" } },
           createdAt: { type: "string" as const, format: "date-time" },
           updatedAt: { type: "string" as const, format: "date-time" },
@@ -117,7 +117,7 @@ const swaggerSpec = {
         type: "object" as const,
         properties: {
           _id: { type: "string" as const },
-          taskInstance: { type: "string" as const, nullable: true, description: "null for backlog questions" },
+          dailyTask: { type: "string" as const, nullable: true, description: "null for backlog questions" },
           task: { type: "string" as const, nullable: true, description: "null for backlog questions" },
           userId: { type: "string" as const },
           title: { type: "string" as const },
@@ -136,9 +136,9 @@ const swaggerSpec = {
       },
       QuestionInput: {
         type: "object" as const,
-        required: ["taskInstanceId", "title"],
+        required: ["dailyTaskId", "title"],
         properties: {
-          taskInstanceId: { type: "string" as const, description: "ID of the task instance to add question to" },
+          dailyTaskId: { type: "string" as const, description: "ID of the daily task to add question to" },
           title: { type: "string" as const },
           notes: { type: "string" as const },
           solution: { type: "string" as const },
@@ -165,17 +165,17 @@ const swaggerSpec = {
       },
       MoveInput: {
         type: "object" as const,
-        required: ["taskInstanceId"],
+        required: ["dailyTaskId"],
         properties: {
-          taskInstanceId: { type: "string" as const, description: "Target task instance ID" },
+          dailyTaskId: { type: "string" as const, description: "Target daily task ID" },
         },
       },
       BulkMoveInput: {
         type: "object" as const,
-        required: ["questionIds", "taskInstanceId"],
+        required: ["questionIds", "dailyTaskId"],
         properties: {
           questionIds: { type: "array" as const, items: { type: "string" as const }, description: "Array of backlog question IDs to move" },
-          taskInstanceId: { type: "string" as const, description: "Target task instance ID" },
+          dailyTaskId: { type: "string" as const, description: "Target daily task ID" },
         },
       },
       Summary: {
@@ -200,7 +200,7 @@ const swaggerSpec = {
               properties: {
                 category: { type: "string" as const },
                 summary: { $ref: "#/components/schemas/Summary" },
-                instances: { type: "array" as const, items: { $ref: "#/components/schemas/TaskInstance" } },
+                dailyTasks: { type: "array" as const, items: { $ref: "#/components/schemas/DailyTask" } },
               },
             },
           },
@@ -278,7 +278,7 @@ const swaggerSpec = {
     "/api/tasks/today": {
       get: {
         tags: ["Tasks"],
-        summary: "Get today's task instances (materializes recurring tasks)",
+        summary: "Get today's daily tasks (materializes recurring tasks)",
         responses: {
           "200": { description: "Today's schedule", content: { "application/json": { schema: { $ref: "#/components/schemas/DaySchedule" } } } },
         },
@@ -287,7 +287,7 @@ const swaggerSpec = {
     "/api/tasks/history": {
       get: {
         tags: ["Tasks"],
-        summary: "Get task instance history for a date or date range",
+        summary: "Get daily task history for a date or date range",
         parameters: [
           { name: "date", in: "query", schema: { type: "string" as const, format: "date" }, description: "Single date lookup" },
           { name: "from", in: "query", schema: { type: "string" as const, format: "date" }, description: "Range start" },
@@ -299,13 +299,13 @@ const swaggerSpec = {
         },
       },
     },
-    "/api/tasks/instances/{id}": {
+    "/api/tasks/daily/{id}": {
       get: {
         tags: ["Tasks"],
-        summary: "Get a task instance with its questions",
+        summary: "Get a daily task with its questions",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
         responses: {
-          "200": { description: "Task instance with questions", content: { "application/json": { schema: { $ref: "#/components/schemas/TaskInstance" } } } },
+          "200": { description: "Daily task with questions", content: { "application/json": { schema: { $ref: "#/components/schemas/DailyTask" } } } },
           "404": { description: "Not found" },
         },
       },
@@ -322,7 +322,7 @@ const swaggerSpec = {
       },
       put: {
         tags: ["Tasks"],
-        summary: "Update a task (changes apply to future instances only)",
+        summary: "Update a task (changes apply to future daily tasks only)",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
         requestBody: {
           required: true,
@@ -335,7 +335,7 @@ const swaggerSpec = {
       },
       delete: {
         tags: ["Tasks"],
-        summary: "Delete a task and all its instances and questions",
+        summary: "Delete a task and all its daily tasks and questions",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
         responses: {
           "200": { description: "Deletion confirmation" },
@@ -352,7 +352,7 @@ const swaggerSpec = {
         parameters: [
           { name: "backlog", in: "query", schema: { type: "string" as const, enum: ["true", "all"] }, description: "true=backlog only, all=include backlog, omit=exclude backlog" },
           { name: "task", in: "query", schema: { type: "string" as const }, description: "Filter by task ID" },
-          { name: "taskInstance", in: "query", schema: { type: "string" as const }, description: "Filter by task instance ID" },
+          { name: "dailyTask", in: "query", schema: { type: "string" as const }, description: "Filter by daily task ID" },
           { name: "status", in: "query", schema: { $ref: "#/components/schemas/QuestionStatus" } },
           { name: "difficulty", in: "query", schema: { $ref: "#/components/schemas/Difficulty" } },
           { name: "topic", in: "query", schema: { type: "string" as const } },
@@ -380,14 +380,14 @@ const swaggerSpec = {
       },
       post: {
         tags: ["Questions"],
-        summary: "Add a question to a task instance",
+        summary: "Add a question to a daily task",
         requestBody: {
           required: true,
           content: { "application/json": { schema: { $ref: "#/components/schemas/QuestionInput" } } },
         },
         responses: {
           "201": { description: "Created question", content: { "application/json": { schema: { $ref: "#/components/schemas/Question" } } } },
-          "404": { description: "Task instance not found" },
+          "404": { description: "Daily task not found" },
         },
       },
     },
@@ -437,7 +437,7 @@ const swaggerSpec = {
     "/api/questions/bulk-move": {
       post: {
         tags: ["Questions"],
-        summary: "Move multiple backlog questions to a task instance",
+        summary: "Move multiple backlog questions to a daily task",
         requestBody: {
           required: true,
           content: { "application/json": { schema: { $ref: "#/components/schemas/BulkMoveInput" } } },
@@ -458,7 +458,7 @@ const swaggerSpec = {
             },
           },
           "400": { description: "Invalid input" },
-          "404": { description: "Task instance not found" },
+          "404": { description: "Daily task not found" },
         },
       },
     },
@@ -647,7 +647,7 @@ const swaggerSpec = {
     "/api/questions/{id}/move": {
       patch: {
         tags: ["Questions"],
-        summary: "Move a backlog question to a task instance",
+        summary: "Move a backlog question to a daily task",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
         requestBody: {
           required: true,
@@ -655,8 +655,8 @@ const swaggerSpec = {
         },
         responses: {
           "200": { description: "Moved question", content: { "application/json": { schema: { $ref: "#/components/schemas/Question" } } } },
-          "400": { description: "Question is already assigned to a task instance" },
-          "404": { description: "Question or task instance not found" },
+          "400": { description: "Question is already assigned to a daily task" },
+          "404": { description: "Question or daily task not found" },
         },
       },
     },
@@ -799,7 +799,7 @@ const swaggerSpec = {
   },
   tags: [
     { name: "Health", description: "Health check" },
-    { name: "Tasks", description: "Task CRUD, scheduling, and instances" },
+    { name: "Tasks", description: "Task CRUD, scheduling, and daily tasks" },
     { name: "Questions", description: "Question CRUD, search, solve, tags, topics, sources" },
     { name: "Stats", description: "Analytics and progress tracking" },
   ],

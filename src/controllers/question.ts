@@ -1,41 +1,41 @@
 import { Response } from "express";
 import { Question } from "../models/Question";
-import { TaskInstance } from "../models/TaskInstance";
+import { DailyTask } from "../models/DailyTask";
 import { AuthRequest } from "../types/auth";
 import { QuestionStatus } from "../types/question";
-import { TaskInstanceStatus } from "../types/taskInstance";
+import { DailyTaskStatus } from "../types/dailyTask";
 
-// ---- Helper to recompute TaskInstance status ----
+// ---- Helper to recompute DailyTask status ----
 
-const recomputeInstanceStatus = async (instanceId: string) => {
-  const instance = await TaskInstance.findById(instanceId);
-  if (!instance) return;
+const recomputeDailyTaskStatus = async (dailyTaskId: string) => {
+  const dailyTask = await DailyTask.findById(dailyTaskId);
+  if (!dailyTask) return;
 
-  let status: TaskInstanceStatus;
+  let status: DailyTaskStatus;
 
-  if (instance.addedQuestionCount === 0) {
-    status = TaskInstanceStatus.Pending;
-  } else if (instance.addedQuestionCount < instance.targetQuestionCount) {
-    if (instance.solvedQuestionCount > 0 && instance.solvedQuestionCount < instance.addedQuestionCount) {
-      status = TaskInstanceStatus.Incomplete; // has questions but below target, some solved
+  if (dailyTask.addedQuestionCount === 0) {
+    status = DailyTaskStatus.Pending;
+  } else if (dailyTask.addedQuestionCount < dailyTask.targetQuestionCount) {
+    if (dailyTask.solvedQuestionCount > 0 && dailyTask.solvedQuestionCount < dailyTask.addedQuestionCount) {
+      status = DailyTaskStatus.Incomplete; // has questions but below target, some solved
     } else {
-      status = TaskInstanceStatus.Incomplete;
+      status = DailyTaskStatus.Incomplete;
     }
   } else if (
-    instance.solvedQuestionCount >= instance.addedQuestionCount &&
-    instance.addedQuestionCount >= instance.targetQuestionCount
+    dailyTask.solvedQuestionCount >= dailyTask.addedQuestionCount &&
+    dailyTask.addedQuestionCount >= dailyTask.targetQuestionCount
   ) {
-    status = TaskInstanceStatus.Completed;
-  } else if (instance.solvedQuestionCount > 0) {
-    status = TaskInstanceStatus.InProgress;
+    status = DailyTaskStatus.Completed;
+  } else if (dailyTask.solvedQuestionCount > 0) {
+    status = DailyTaskStatus.InProgress;
   } else {
     // Has enough questions but none solved
-    status = TaskInstanceStatus.Pending;
+    status = DailyTaskStatus.Pending;
   }
 
-  if (instance.status !== status) {
-    instance.status = status;
-    await instance.save();
+  if (dailyTask.status !== status) {
+    dailyTask.status = status;
+    await dailyTask.save();
   }
 };
 
@@ -45,7 +45,7 @@ export const createQuestion = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
     const {
-      taskInstanceId,
+      dailyTaskId,
       title,
       notes,
       solution,
@@ -56,16 +56,16 @@ export const createQuestion = async (req: AuthRequest, res: Response) => {
       tags,
     } = req.body;
 
-    // Verify the instance belongs to this user
-    const instance = await TaskInstance.findOne({ _id: taskInstanceId, userId });
-    if (!instance) {
-      res.status(404).json({ message: "Task instance not found" });
+    // Verify the daily task belongs to this user
+    const dailyTask = await DailyTask.findOne({ _id: dailyTaskId, userId });
+    if (!dailyTask) {
+      res.status(404).json({ message: "Daily task not found" });
       return;
     }
 
     const question = await Question.create({
-      taskInstance: instance._id,
-      task: instance.task,
+      dailyTask: dailyTask._id,
+      task: dailyTask.task,
       userId,
       title,
       notes,
@@ -77,10 +77,10 @@ export const createQuestion = async (req: AuthRequest, res: Response) => {
       tags,
     });
 
-    // Update instance counter
-    instance.addedQuestionCount += 1;
-    await instance.save();
-    await recomputeInstanceStatus(instance._id.toString());
+    // Update daily task counter
+    dailyTask.addedQuestionCount += 1;
+    await dailyTask.save();
+    await recomputeDailyTaskStatus(dailyTask._id.toString());
 
     res.status(201).json(question);
   } catch (error) {
@@ -96,13 +96,13 @@ export const getAllQuestions = async (req: AuthRequest, res: Response) => {
     // Backlog filter: ?backlog=true for backlog only, ?backlog=all for everything, default excludes backlog
     const backlog = req.query.backlog as string;
     if (backlog === "true") {
-      filter.taskInstance = null;
+      filter.dailyTask = null;
     } else if (backlog !== "all") {
-      filter.taskInstance = { $ne: null };
+      filter.dailyTask = { $ne: null };
     }
 
     if (req.query.task) filter.task = req.query.task as string;
-    if (req.query.taskInstance) filter.taskInstance = req.query.taskInstance as string;
+    if (req.query.dailyTask) filter.dailyTask = req.query.dailyTask as string;
     if (req.query.status) filter.status = req.query.status as string;
     if (req.query.difficulty) filter.difficulty = req.query.difficulty as string;
     if (req.query.topic) filter.topic = req.query.topic as string;
@@ -175,14 +175,14 @@ export const deleteQuestion = async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    // Update instance counters (only if question was assigned to an instance)
-    if (question.taskInstance) {
+    // Update daily task counters (only if question was assigned to a daily task)
+    if (question.dailyTask) {
       const update: Record<string, number> = { addedQuestionCount: -1 };
       if (question.status === QuestionStatus.Solved) {
         update.solvedQuestionCount = -1;
       }
-      await TaskInstance.findByIdAndUpdate(question.taskInstance, { $inc: update });
-      await recomputeInstanceStatus(question.taskInstance.toString());
+      await DailyTask.findByIdAndUpdate(question.dailyTask, { $inc: update });
+      await recomputeDailyTaskStatus(question.dailyTask.toString());
     }
 
     res.status(200).json({ message: "Question deleted" });
@@ -203,8 +203,8 @@ export const solveQuestion = async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    if (!question.taskInstance) {
-      res.status(400).json({ message: "Cannot solve a backlog question. Move it to a task instance first." });
+    if (!question.dailyTask) {
+      res.status(400).json({ message: "Cannot solve a backlog question. Move it to a daily task first." });
       return;
     }
 
@@ -217,11 +217,11 @@ export const solveQuestion = async (req: AuthRequest, res: Response) => {
     question.solvedAt = new Date();
     await question.save();
 
-    // Update instance counter
-    await TaskInstance.findByIdAndUpdate(question.taskInstance, {
+    // Update daily task counter
+    await DailyTask.findByIdAndUpdate(question.dailyTask, {
       $inc: { solvedQuestionCount: 1 },
     });
-    await recomputeInstanceStatus(question.taskInstance.toString());
+    await recomputeDailyTaskStatus(question.dailyTask.toString());
 
     res.status(200).json(question);
   } catch (error) {
@@ -292,12 +292,12 @@ export const getAllTopics = async (req: AuthRequest, res: Response) => {
     const userId = req.user?.id;
     const filter: Record<string, any> = { userId, topic: { $nin: [null, ""] } };
     if (req.query.category) {
-      // Need to join with TaskInstance to filter by category
-      const instances = await TaskInstance.find({
+      // Need to join with DailyTask to filter by category
+      const dailyTasks = await DailyTask.find({
         userId,
         category: req.query.category as string,
       }).select("_id");
-      filter.taskInstance = { $in: instances.map((i) => i._id) };
+      filter.dailyTask = { $in: dailyTasks.map((i) => i._id) };
     }
 
     const result = await Question.aggregate([
@@ -342,16 +342,16 @@ export const bulkDeleteQuestions = async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    // Get questions before deleting to update instance counters
+    // Get questions before deleting to update daily task counters
     const questions = await Question.find({ _id: { $in: ids }, userId });
 
-    // Group by instance and count (skip backlog questions with no instance)
-    const instanceUpdates = new Map<string, { added: number; solved: number }>();
+    // Group by daily task and count (skip backlog questions with no daily task)
+    const dailyTaskUpdates = new Map<string, { added: number; solved: number }>();
     for (const q of questions) {
-      if (!q.taskInstance) continue;
-      const key = q.taskInstance.toString();
-      if (!instanceUpdates.has(key)) instanceUpdates.set(key, { added: 0, solved: 0 });
-      const update = instanceUpdates.get(key)!;
+      if (!q.dailyTask) continue;
+      const key = q.dailyTask.toString();
+      if (!dailyTaskUpdates.has(key)) dailyTaskUpdates.set(key, { added: 0, solved: 0 });
+      const update = dailyTaskUpdates.get(key)!;
       update.added += 1;
       if (q.status === QuestionStatus.Solved) update.solved += 1;
     }
@@ -359,15 +359,15 @@ export const bulkDeleteQuestions = async (req: AuthRequest, res: Response) => {
     // Delete questions
     const deleteResult = await Question.deleteMany({ _id: { $in: ids }, userId });
 
-    // Update instance counters
-    for (const [instanceId, counts] of instanceUpdates) {
-      await TaskInstance.findByIdAndUpdate(instanceId, {
+    // Update daily task counters
+    for (const [dailyTaskId, counts] of dailyTaskUpdates) {
+      await DailyTask.findByIdAndUpdate(dailyTaskId, {
         $inc: {
           addedQuestionCount: -counts.added,
           solvedQuestionCount: -counts.solved,
         },
       });
-      await recomputeInstanceStatus(instanceId);
+      await recomputeDailyTaskStatus(dailyTaskId);
     }
 
     res.status(200).json({
@@ -387,7 +387,7 @@ export const createBacklogQuestion = async (req: AuthRequest, res: Response) => 
     const { title, notes, solution, difficulty, topic, source, url, tags } = req.body;
 
     const question = await Question.create({
-      taskInstance: null,
+      dailyTask: null,
       task: null,
       userId,
       title,
@@ -409,7 +409,7 @@ export const createBacklogQuestion = async (req: AuthRequest, res: Response) => 
 export const getBacklogQuestions = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const filter: Record<string, any> = { userId, taskInstance: null };
+    const filter: Record<string, any> = { userId, dailyTask: null };
 
     if (req.query.status) filter.status = req.query.status as string;
     if (req.query.difficulty) filter.difficulty = req.query.difficulty as string;
@@ -435,10 +435,10 @@ export const getBacklogQuestions = async (req: AuthRequest, res: Response) => {
   }
 };
 
-export const moveToTaskInstance = async (req: AuthRequest, res: Response) => {
+export const moveToDailyTask = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const { taskInstanceId } = req.body;
+    const { dailyTaskId } = req.body;
 
     const question = await Question.findOne({ _id: req.params.id, userId });
     if (!question) {
@@ -446,63 +446,63 @@ export const moveToTaskInstance = async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    if (question.taskInstance) {
-      res.status(400).json({ message: "Question is already assigned to a task instance" });
+    if (question.dailyTask) {
+      res.status(400).json({ message: "Question is already assigned to a daily task" });
       return;
     }
 
-    const instance = await TaskInstance.findOne({ _id: taskInstanceId, userId });
-    if (!instance) {
-      res.status(404).json({ message: "Task instance not found" });
+    const dailyTask = await DailyTask.findOne({ _id: dailyTaskId, userId });
+    if (!dailyTask) {
+      res.status(404).json({ message: "Daily task not found" });
       return;
     }
 
-    question.taskInstance = instance._id;
-    question.task = instance.task;
+    question.dailyTask = dailyTask._id;
+    question.task = dailyTask.task;
     await question.save();
 
-    instance.addedQuestionCount += 1;
-    await instance.save();
-    await recomputeInstanceStatus(instance._id.toString());
+    dailyTask.addedQuestionCount += 1;
+    await dailyTask.save();
+    await recomputeDailyTaskStatus(dailyTask._id.toString());
 
     res.status(200).json(question);
   } catch (error) {
-    res.status(500).json({ message: "Error moving question to task instance", error });
+    res.status(500).json({ message: "Error moving question to daily task", error });
   }
 };
 
-export const bulkMoveToTaskInstance = async (req: AuthRequest, res: Response) => {
+export const bulkMoveToDailyTask = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const { questionIds, taskInstanceId } = req.body;
+    const { questionIds, dailyTaskId } = req.body;
 
     if (!Array.isArray(questionIds) || questionIds.length === 0) {
       res.status(400).json({ message: "questionIds must be a non-empty array" });
       return;
     }
 
-    const instance = await TaskInstance.findOne({ _id: taskInstanceId, userId });
-    if (!instance) {
-      res.status(404).json({ message: "Task instance not found" });
+    const dailyTask = await DailyTask.findOne({ _id: dailyTaskId, userId });
+    if (!dailyTask) {
+      res.status(404).json({ message: "Daily task not found" });
       return;
     }
 
-    // Only move questions that are actually backlog (taskInstance === null)
+    // Only move questions that are actually backlog (dailyTask === null)
     const backlogQuestions = await Question.find({
       _id: { $in: questionIds },
       userId,
-      taskInstance: null,
+      dailyTask: null,
     });
 
     if (backlogQuestions.length > 0) {
       await Question.updateMany(
         { _id: { $in: backlogQuestions.map((q) => q._id) } },
-        { taskInstance: instance._id, task: instance.task }
+        { dailyTask: dailyTask._id, task: dailyTask.task }
       );
 
-      instance.addedQuestionCount += backlogQuestions.length;
-      await instance.save();
-      await recomputeInstanceStatus(instance._id.toString());
+      dailyTask.addedQuestionCount += backlogQuestions.length;
+      await dailyTask.save();
+      await recomputeDailyTaskStatus(dailyTask._id.toString());
     }
 
     res.status(200).json({
@@ -510,6 +510,6 @@ export const bulkMoveToTaskInstance = async (req: AuthRequest, res: Response) =>
       skippedCount: questionIds.length - backlogQuestions.length,
     });
   } catch (error) {
-    res.status(500).json({ message: "Error moving questions to task instance", error });
+    res.status(500).json({ message: "Error moving questions to daily task", error });
   }
 };

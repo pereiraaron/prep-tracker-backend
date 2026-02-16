@@ -1,10 +1,10 @@
 import { Response } from "express";
 import { Question } from "../models/Question";
-import { TaskInstance } from "../models/TaskInstance";
+import { DailyTask } from "../models/DailyTask";
 import { AuthRequest } from "../types/auth";
 import { PrepCategory } from "../types/category";
 import { QuestionStatus, Difficulty } from "../types/question";
-import { TaskInstanceStatus } from "../types/taskInstance";
+import { DailyTaskStatus } from "../types/dailyTask";
 
 /**
  * GET /api/stats/overview
@@ -14,20 +14,20 @@ export const getOverview = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
 
-    const activeFilter = { userId, taskInstance: { $ne: null } };
+    const activeFilter = { userId, dailyTask: { $ne: null } };
 
     const [byStatus, byCategory, byDifficulty, total, backlogCount] = await Promise.all([
       Question.aggregate([
         { $match: activeFilter },
         { $group: { _id: "$status", count: { $sum: 1 } } },
       ]),
-      TaskInstance.aggregate([
+      DailyTask.aggregate([
         { $match: { userId } },
         {
           $lookup: {
             from: "questions",
             localField: "_id",
-            foreignField: "taskInstance",
+            foreignField: "dailyTask",
             as: "questions",
           },
         },
@@ -39,7 +39,7 @@ export const getOverview = async (req: AuthRequest, res: Response) => {
         { $group: { _id: "$difficulty", count: { $sum: 1 } } },
       ]),
       Question.countDocuments(activeFilter),
-      Question.countDocuments({ userId, taskInstance: null }),
+      Question.countDocuments({ userId, dailyTask: null }),
     ]);
 
     const statusMap: Record<string, number> = {};
@@ -74,13 +74,13 @@ export const getCategoryBreakdown = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
 
-    const pipeline = await TaskInstance.aggregate([
+    const pipeline = await DailyTask.aggregate([
       { $match: { userId } },
       {
         $lookup: {
           from: "questions",
           localField: "_id",
-          foreignField: "taskInstance",
+          foreignField: "dailyTask",
           as: "questions",
         },
       },
@@ -133,7 +133,7 @@ export const getDifficultyBreakdown = async (req: AuthRequest, res: Response) =>
     const userId = req.user?.id;
 
     const pipeline = await Question.aggregate([
-      { $match: { userId, taskInstance: { $ne: null }, difficulty: { $ne: null } } },
+      { $match: { userId, dailyTask: { $ne: null }, difficulty: { $ne: null } } },
       {
         $group: {
           _id: { difficulty: "$difficulty", status: "$status" },
@@ -176,14 +176,14 @@ export const getDifficultyBreakdown = async (req: AuthRequest, res: Response) =>
 /**
  * GET /api/stats/streaks
  * Returns the current streak and longest streak of consecutive days
- * with at least one completed task instance.
+ * with at least one completed daily task.
  */
 export const getStreaks = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
 
-    const completions = await TaskInstance.aggregate([
-      { $match: { userId, status: TaskInstanceStatus.Completed } },
+    const completions = await DailyTask.aggregate([
+      { $match: { userId, status: DailyTaskStatus.Completed } },
       {
         $group: {
           _id: {
@@ -270,7 +270,7 @@ export const getProgress = async (req: AuthRequest, res: Response) => {
       {
         $match: {
           userId,
-          taskInstance: { $ne: null },
+          dailyTask: { $ne: null },
           status: QuestionStatus.Solved,
           solvedAt: { $gte: startDate },
         },

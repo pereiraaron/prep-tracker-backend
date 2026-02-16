@@ -1,13 +1,13 @@
 import { Document, Types } from "mongoose";
 
-export enum TaskInstanceStatus {
+export enum DailyTaskStatus {
   Pending = "pending",
   Incomplete = "incomplete",
   InProgress = "in_progress",
   Completed = "completed",
 }
 
-export interface ITaskInstance extends Document {
+export interface IDailyTask extends Document {
   task: Types.ObjectId;
   userId: string;
   date: Date;
@@ -19,7 +19,7 @@ export interface ITaskInstance extends Document {
   addedQuestionCount: number;
   solvedQuestionCount: number;
   // status
-  status: TaskInstanceStatus;
+  status: DailyTaskStatus;
   createdAt: Date;
   updatedAt: Date;
 }

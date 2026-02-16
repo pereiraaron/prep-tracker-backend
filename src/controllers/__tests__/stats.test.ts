@@ -6,9 +6,9 @@ import {
   getProgress,
 } from "../stats";
 import { Question } from "../../models/Question";
-import { TaskInstance } from "../../models/TaskInstance";
+import { DailyTask } from "../../models/DailyTask";
 import { QuestionStatus, Difficulty } from "../../types/question";
-import { TaskInstanceStatus } from "../../types/taskInstance";
+import { DailyTaskStatus } from "../../types/dailyTask";
 import { PrepCategory } from "../../types/category";
 
 jest.mock("../../models/Question", () => ({
@@ -18,8 +18,8 @@ jest.mock("../../models/Question", () => ({
   },
 }));
 
-jest.mock("../../models/TaskInstance", () => ({
-  TaskInstance: {
+jest.mock("../../models/DailyTask", () => ({
+  DailyTask: {
     aggregate: jest.fn(),
   },
 }));
@@ -55,7 +55,7 @@ describe("getOverview", () => {
         { _id: Difficulty.Hard, count: 1 },
       ]); // byDifficulty
 
-    (TaskInstance.aggregate as jest.Mock).mockResolvedValueOnce([
+    (DailyTask.aggregate as jest.Mock).mockResolvedValueOnce([
       { _id: PrepCategory.DSA, count: 4 },
       { _id: PrepCategory.SystemDesign, count: 2 },
     ]); // byCategory
@@ -97,7 +97,7 @@ describe("getOverview", () => {
 // ---- getCategoryBreakdown ----
 describe("getCategoryBreakdown", () => {
   it("returns per-category breakdown with completion rates", async () => {
-    (TaskInstance.aggregate as jest.Mock).mockResolvedValue([
+    (DailyTask.aggregate as jest.Mock).mockResolvedValue([
       { _id: { category: PrepCategory.DSA, status: QuestionStatus.Solved }, count: 3 },
       { _id: { category: PrepCategory.DSA, status: QuestionStatus.Pending }, count: 7 },
       { _id: { category: PrepCategory.Behavioral, status: QuestionStatus.Solved }, count: 1 },
@@ -159,7 +159,7 @@ describe("getDifficultyBreakdown", () => {
 // ---- getStreaks ----
 describe("getStreaks", () => {
   it("returns zero streaks when no completions exist", async () => {
-    (TaskInstance.aggregate as jest.Mock).mockResolvedValue([]);
+    (DailyTask.aggregate as jest.Mock).mockResolvedValue([]);
 
     const req = mockReq();
     const res = mockRes();
@@ -177,7 +177,7 @@ describe("getStreaks", () => {
   it("calculates longest streak and total active days from completion dates", async () => {
     const dates = ["2025-01-10", "2025-01-11", "2025-01-12"];
 
-    (TaskInstance.aggregate as jest.Mock).mockResolvedValue(
+    (DailyTask.aggregate as jest.Mock).mockResolvedValue(
       dates.map((d) => ({ _id: d }))
     );
 
@@ -199,7 +199,7 @@ describe("getStreaks", () => {
     const threeDaysAgo = new Date(today);
     threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
 
-    (TaskInstance.aggregate as jest.Mock).mockResolvedValue([
+    (DailyTask.aggregate as jest.Mock).mockResolvedValue([
       { _id: threeDaysAgo.toISOString().split("T")[0] },
     ]);
 

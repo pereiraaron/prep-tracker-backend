@@ -8,7 +8,7 @@ import {
   deleteTask,
   getToday,
   getHistory,
-  getInstanceById,
+  getDailyTaskById,
 } from "../controllers/task";
 
 const router = Router();
@@ -16,7 +16,7 @@ const router = Router();
 // Named endpoints (must be before /:id to avoid conflicts)
 router.get("/today", authenticate, getToday);
 router.get("/history", authenticate, getHistory);
-router.get("/instances/:id", authenticate, getInstanceById);
+router.get("/daily/:id", authenticate, getDailyTaskById);
 
 router.route("/").get(authenticate, getAllTasks).post(authenticate, createTask);
 

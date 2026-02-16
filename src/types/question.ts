@@ -19,7 +19,7 @@ export enum QuestionSource {
 }
 
 export interface IQuestion extends Document {
-  taskInstance: Types.ObjectId | null;
+  dailyTask: Types.ObjectId | null;
   task: Types.ObjectId | null;
   userId: string;
   title: string;

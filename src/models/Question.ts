@@ -3,9 +3,9 @@ import { IQuestion, QuestionStatus, Difficulty, QuestionSource } from "../types/
 
 const questionSchema = new Schema<IQuestion>(
   {
-    taskInstance: {
+    dailyTask: {
       $type: Schema.Types.ObjectId,
-      ref: "TaskInstance",
+      ref: "DailyTask",
       default: null,
     },
     task: {
@@ -65,10 +65,10 @@ const questionSchema = new Schema<IQuestion>(
   }
 );
 
-questionSchema.index({ taskInstance: 1 });
+questionSchema.index({ dailyTask: 1 });
 questionSchema.index({ task: 1, userId: 1 });
 questionSchema.index({ userId: 1, status: 1 });
 questionSchema.index({ userId: 1, solvedAt: 1 });
-questionSchema.index({ userId: 1, taskInstance: 1 });
+questionSchema.index({ userId: 1, dailyTask: 1 });
 
 export const Question = model("Question", questionSchema);
