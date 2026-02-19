@@ -43,7 +43,8 @@ async function setup() {
   await db.collection("questions").createIndex({ userId: 1, starred: 1 });
   await db.collection("questions").createIndex({ userId: 1, topic: 1 });
   await db.collection("questions").createIndex({ userId: 1, nextReviewAt: 1 });
-  console.log("Indexes: questions (7)");
+  await db.collection("questions").createIndex({ deletedAt: 1 });
+  console.log("Indexes: questions (8)");
 
   console.log("Done.");
   await mongoose.disconnect();

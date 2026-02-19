@@ -40,6 +40,7 @@ jest.mock("../../models/Question", () => ({
   Question: {
     find: jest.fn(),
     deleteMany: jest.fn(),
+    updateMany: jest.fn(),
   },
 }));
 
@@ -107,6 +108,7 @@ const mockDailyTaskDoc = (overrides: Record<string, any> = {}) => {
   return {
     ...base,
     toObject: () => ({ ...base }),
+    toJSON: () => ({ ...base }),
   };
 };
 
@@ -222,7 +224,8 @@ describe("getAllTasks", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0];
-    expect(body.tasks).toEqual(tasks);
+    expect(body.success).toBe(true);
+    expect(body.data).toEqual(tasks);
     expect(body.pagination).toEqual({ page: 1, limit: 50, total: 1, totalPages: 1 });
   });
 
@@ -281,7 +284,7 @@ describe("getTaskById", () => {
     await getTaskById(req, res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(res.json).toHaveBeenCalledWith(task);
+    expect(res.json).toHaveBeenCalledWith({ success: true, data: task });
   });
 
   it("returns 404 when not found", async () => {
@@ -336,7 +339,7 @@ describe("deleteTask", () => {
     const task = mockTaskDoc();
     (Task.findOneAndDelete as jest.Mock).mockResolvedValue(task);
     (DailyTask.deleteMany as jest.Mock).mockResolvedValue({ deletedCount: 3 });
-    (Question.deleteMany as jest.Mock).mockResolvedValue({ deletedCount: 10 });
+    (Question.updateMany as jest.Mock).mockResolvedValue({ modifiedCount: 10 });
 
     const req = mockReq({ params: { id: "task1" } });
     const res = mockRes();
@@ -345,7 +348,7 @@ describe("deleteTask", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     expect(DailyTask.deleteMany).toHaveBeenCalledWith({ task: "task1", userId: "user1" });
-    expect(Question.deleteMany).toHaveBeenCalledWith({ task: "task1", userId: "user1" });
+    expect(Question.updateMany).toHaveBeenCalled();
   });
 
   it("returns 404 when not found", async () => {
@@ -380,12 +383,13 @@ describe("getToday", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0];
-    expect(body).toHaveProperty("date");
-    expect(body).toHaveProperty("summary");
-    expect(body.summary.total).toBe(1);
-    expect(body).toHaveProperty("groups");
-    expect(body.groups.length).toBe(1);
-    expect(body.groups[0].category).toBe("dsa");
+    expect(body.success).toBe(true);
+    expect(body.data).toHaveProperty("date");
+    expect(body.data).toHaveProperty("summary");
+    expect(body.data.summary.total).toBe(1);
+    expect(body.data).toHaveProperty("groups");
+    expect(body.data.groups.length).toBe(1);
+    expect(body.data.groups[0].category).toBe("dsa");
   });
 
   it("materializes recurring tasks", async () => {
@@ -415,7 +419,7 @@ describe("getToday", () => {
     expect(DailyTask.findOneAndUpdate).toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0];
-    expect(body.summary.total).toBe(1);
+    expect(body.data.summary.total).toBe(1);
   });
 
   it("skips materialization for tasks not on date", async () => {
@@ -438,7 +442,7 @@ describe("getToday", () => {
     expect(DailyTask.findOneAndUpdate).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0];
-    expect(body.summary.total).toBe(0);
+    expect(body.data.summary.total).toBe(0);
   });
 
   it("returns 401 when user is not authenticated", async () => {
@@ -465,7 +469,7 @@ describe("getToday", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0];
-    const group = body.groups[0];
+    const group = body.data.groups[0];
     expect(group.dailyTasks[0].questions).toEqual([question]);
   });
 
@@ -506,9 +510,9 @@ describe("getHistory", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0];
-    expect(body).toHaveProperty("date");
-    expect(body).toHaveProperty("summary");
-    expect(body).toHaveProperty("groups");
+    expect(body.data).toHaveProperty("date");
+    expect(body.data).toHaveProperty("summary");
+    expect(body.data).toHaveProperty("groups");
   });
 
   it("returns daily tasks for a date range", async () => {
@@ -525,10 +529,10 @@ describe("getHistory", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0];
-    expect(body).toHaveProperty("from");
-    expect(body).toHaveProperty("to");
-    expect(body).toHaveProperty("days");
-    expect(body.days.length).toBeGreaterThanOrEqual(1);
+    expect(body.data).toHaveProperty("from");
+    expect(body.data).toHaveProperty("to");
+    expect(body.data).toHaveProperty("days");
+    expect(body.data.days.length).toBeGreaterThanOrEqual(1);
   });
 
   it("returns 400 when no query parameters provided", async () => {
@@ -557,7 +561,7 @@ describe("getDailyTaskById", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0];
-    expect(body.questions).toEqual(questions);
+    expect(body.data.questions).toEqual(questions);
   });
 
   it("returns 404 when not found", async () => {

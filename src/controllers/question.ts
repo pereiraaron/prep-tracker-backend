@@ -1,9 +1,12 @@
 import { Response } from "express";
+import mongoose from "mongoose";
 import { Question } from "../models/Question";
 import { DailyTask } from "../models/DailyTask";
 import { AuthRequest } from "../types/auth";
 import { QuestionStatus, REVIEW_INTERVALS } from "../types/question";
 import { DailyTaskStatus } from "../types/dailyTask";
+import { sendSuccess, sendPaginated, sendError } from "../utils/response";
+import { logger } from "../utils/logger";
 
 // ---- Helper to recompute DailyTask status ----
 
@@ -55,7 +58,7 @@ export const createQuestion = async (req: AuthRequest, res: Response) => {
     // Verify the daily task belongs to this user
     const dailyTask = await DailyTask.findOne({ _id: dailyTaskId, userId });
     if (!dailyTask) {
-      res.status(404).json({ message: "Daily task not found" });
+      sendError(res, "Daily task not found", 404);
       return;
     }
 
@@ -79,9 +82,10 @@ export const createQuestion = async (req: AuthRequest, res: Response) => {
     });
     await recomputeDailyTaskStatus(dailyTask._id.toString());
 
-    res.status(201).json(question);
+    sendSuccess(res, question, 201);
   } catch (error) {
-    res.status(500).json({ message: "Error creating question" });
+    logger.error((error as Error).message);
+    sendError(res, "Error creating question");
   }
 };
 
@@ -116,12 +120,10 @@ export const getAllQuestions = async (req: AuthRequest, res: Response) => {
       Question.countDocuments(filter),
     ]);
 
-    res.status(200).json({
-      questions,
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
-    });
+    sendPaginated(res, questions, { page, limit, total, totalPages: Math.ceil(total / limit) });
   } catch (error) {
-    res.status(500).json({ message: "Error fetching questions" });
+    logger.error((error as Error).message);
+    sendError(res, "Error fetching questions");
   }
 };
 
@@ -131,13 +133,14 @@ export const getQuestionById = async (req: AuthRequest, res: Response) => {
     const question = await Question.findOne({ _id: req.params.id, userId });
 
     if (!question) {
-      res.status(404).json({ message: "Question not found" });
+      sendError(res, "Question not found", 404);
       return;
     }
 
-    res.status(200).json(question);
+    sendSuccess(res, question);
   } catch (error) {
-    res.status(500).json({ message: "Error fetching question" });
+    logger.error((error as Error).message);
+    sendError(res, "Error fetching question");
   }
 };
 
@@ -148,7 +151,7 @@ export const updateQuestion = async (req: AuthRequest, res: Response) => {
 
     const question = await Question.findOne({ _id: req.params.id, userId });
     if (!question) {
-      res.status(404).json({ message: "Question not found" });
+      sendError(res, "Question not found", 404);
       return;
     }
 
@@ -175,21 +178,29 @@ export const updateQuestion = async (req: AuthRequest, res: Response) => {
 
     await question.save();
 
-    res.status(200).json(question);
+    sendSuccess(res, question);
   } catch (error) {
-    res.status(500).json({ message: "Error updating question" });
+    logger.error((error as Error).message);
+    sendError(res, "Error updating question");
   }
 };
 
 export const deleteQuestion = async (req: AuthRequest, res: Response) => {
+  const session = await mongoose.startSession();
   try {
+    session.startTransaction();
     const userId = req.user?.id;
-    const question = await Question.findOneAndDelete({ _id: req.params.id, userId });
+    const question = await Question.findOne({ _id: req.params.id, userId }).session(session);
 
     if (!question) {
-      res.status(404).json({ message: "Question not found" });
+      await session.abortTransaction();
+      sendError(res, "Question not found", 404);
       return;
     }
+
+    // Soft delete
+    question.deletedAt = new Date();
+    await question.save({ session });
 
     // Update daily task counters (only if question was assigned to a daily task)
     if (question.dailyTask) {
@@ -197,35 +208,49 @@ export const deleteQuestion = async (req: AuthRequest, res: Response) => {
       if (question.status === QuestionStatus.Solved) {
         update.solvedQuestionCount = -1;
       }
-      await DailyTask.findByIdAndUpdate(question.dailyTask, { $inc: update });
+      await DailyTask.findByIdAndUpdate(question.dailyTask, { $inc: update }, { session });
+    }
+
+    await session.commitTransaction();
+
+    if (question.dailyTask) {
       await recomputeDailyTaskStatus(question.dailyTask.toString());
     }
 
-    res.status(200).json({ message: "Question deleted" });
+    sendSuccess(res, { message: "Question deleted" });
   } catch (error) {
-    res.status(500).json({ message: "Error deleting question" });
+    await session.abortTransaction();
+    logger.error((error as Error).message);
+    sendError(res, "Error deleting question");
+  } finally {
+    session.endSession();
   }
 };
 
 // ---- Solve ----
 
 export const solveQuestion = async (req: AuthRequest, res: Response) => {
+  const session = await mongoose.startSession();
   try {
+    session.startTransaction();
     const userId = req.user?.id;
-    const question = await Question.findOne({ _id: req.params.id, userId });
+    const question = await Question.findOne({ _id: req.params.id, userId }).session(session);
 
     if (!question) {
-      res.status(404).json({ message: "Question not found" });
+      await session.abortTransaction();
+      sendError(res, "Question not found", 404);
       return;
     }
 
     if (!question.dailyTask) {
-      res.status(400).json({ message: "Cannot solve a backlog question. Move it to a daily task first." });
+      await session.abortTransaction();
+      sendError(res, "Cannot solve a backlog question. Move it to a daily task first.", 400);
       return;
     }
 
     if (question.status === QuestionStatus.Solved) {
-      res.status(400).json({ message: "Question is already solved" });
+      await session.abortTransaction();
+      sendError(res, "Question is already solved", 400);
       return;
     }
 
@@ -239,34 +264,44 @@ export const solveQuestion = async (req: AuthRequest, res: Response) => {
       question.nextReviewAt = nextReview;
     }
 
-    await question.save();
+    await question.save({ session });
 
     // Update daily task counter
     await DailyTask.findByIdAndUpdate(question.dailyTask, {
       $inc: { solvedQuestionCount: 1 },
-    });
+    }, { session });
+
+    await session.commitTransaction();
     await recomputeDailyTaskStatus(question.dailyTask.toString());
 
-    res.status(200).json(question);
+    sendSuccess(res, question);
   } catch (error) {
-    res.status(500).json({ message: "Error solving question" });
+    await session.abortTransaction();
+    logger.error((error as Error).message);
+    sendError(res, "Error solving question");
+  } finally {
+    session.endSession();
   }
 };
 
 // ---- Reset ----
 
 export const resetQuestion = async (req: AuthRequest, res: Response) => {
+  const session = await mongoose.startSession();
   try {
+    session.startTransaction();
     const userId = req.user?.id;
-    const question = await Question.findOne({ _id: req.params.id, userId });
+    const question = await Question.findOne({ _id: req.params.id, userId }).session(session);
 
     if (!question) {
-      res.status(404).json({ message: "Question not found" });
+      await session.abortTransaction();
+      sendError(res, "Question not found", 404);
       return;
     }
 
     if (question.status !== QuestionStatus.Solved) {
-      res.status(400).json({ message: "Question is not solved" });
+      await session.abortTransaction();
+      sendError(res, "Question is not solved", 400);
       return;
     }
 
@@ -275,19 +310,28 @@ export const resetQuestion = async (req: AuthRequest, res: Response) => {
     question.reviewCount = 0;
     question.nextReviewAt = undefined;
     question.lastReviewedAt = undefined;
-    await question.save();
+    await question.save({ session });
 
     // Update daily task counter
     if (question.dailyTask) {
       await DailyTask.findByIdAndUpdate(question.dailyTask, {
         $inc: { solvedQuestionCount: -1 },
-      });
+      }, { session });
+    }
+
+    await session.commitTransaction();
+
+    if (question.dailyTask) {
       await recomputeDailyTaskStatus(question.dailyTask.toString());
     }
 
-    res.status(200).json(question);
+    sendSuccess(res, question);
   } catch (error) {
-    res.status(500).json({ message: "Error resetting question" });
+    await session.abortTransaction();
+    logger.error((error as Error).message);
+    sendError(res, "Error resetting question");
+  } finally {
+    session.endSession();
   }
 };
 
@@ -299,16 +343,17 @@ export const toggleStarred = async (req: AuthRequest, res: Response) => {
     const question = await Question.findOne({ _id: req.params.id, userId });
 
     if (!question) {
-      res.status(404).json({ message: "Question not found" });
+      sendError(res, "Question not found", 404);
       return;
     }
 
     question.starred = !question.starred;
     await question.save();
 
-    res.status(200).json(question);
+    sendSuccess(res, question);
   } catch (error) {
-    res.status(500).json({ message: "Error toggling starred" });
+    logger.error((error as Error).message);
+    sendError(res, "Error toggling starred");
   }
 };
 
@@ -320,12 +365,12 @@ export const reviewQuestion = async (req: AuthRequest, res: Response) => {
     const question = await Question.findOne({ _id: req.params.id, userId });
 
     if (!question) {
-      res.status(404).json({ message: "Question not found" });
+      sendError(res, "Question not found", 404);
       return;
     }
 
     if (question.status !== QuestionStatus.Solved) {
-      res.status(400).json({ message: "Only solved questions can be reviewed" });
+      sendError(res, "Only solved questions can be reviewed", 400);
       return;
     }
 
@@ -341,9 +386,10 @@ export const reviewQuestion = async (req: AuthRequest, res: Response) => {
 
     await question.save();
 
-    res.status(200).json(question);
+    sendSuccess(res, question);
   } catch (error) {
-    res.status(500).json({ message: "Error reviewing question" });
+    logger.error((error as Error).message);
+    sendError(res, "Error reviewing question");
   }
 };
 
@@ -361,11 +407,19 @@ export const getDueForReview = async (req: AuthRequest, res: Response) => {
     if (req.query.topic) filter.topic = req.query.topic as string;
     if (req.query.difficulty) filter.difficulty = req.query.difficulty as string;
 
-    const questions = await Question.find(filter).sort({ nextReviewAt: 1 });
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
+    const skip = (page - 1) * limit;
 
-    res.status(200).json(questions);
+    const [questions, total] = await Promise.all([
+      Question.find(filter).sort({ nextReviewAt: 1 }).skip(skip).limit(limit),
+      Question.countDocuments(filter),
+    ]);
+
+    sendPaginated(res, questions, { page, limit, total, totalPages: Math.ceil(total / limit) });
   } catch (error) {
-    res.status(500).json({ message: "Error fetching due reviews" });
+    logger.error((error as Error).message);
+    sendError(res, "Error fetching due reviews");
   }
 };
 
@@ -377,16 +431,17 @@ export const getRevisions = async (req: AuthRequest, res: Response) => {
     const question = await Question.findOne({ _id: req.params.id, userId });
 
     if (!question) {
-      res.status(404).json({ message: "Question not found" });
+      sendError(res, "Question not found", 404);
       return;
     }
 
-    res.status(200).json({
+    sendSuccess(res, {
       current: { notes: question.notes, solution: question.solution },
       revisions: question.revisions,
     });
   } catch (error) {
-    res.status(500).json({ message: "Error fetching revisions" });
+    logger.error((error as Error).message);
+    sendError(res, "Error fetching revisions");
   }
 };
 
@@ -398,7 +453,12 @@ export const searchQuestions = async (req: AuthRequest, res: Response) => {
     const q = req.query.q as string;
 
     if (!q || q.trim().length === 0) {
-      res.status(400).json({ message: "Search query 'q' is required" });
+      sendError(res, "Search query 'q' is required", 400);
+      return;
+    }
+
+    if (q.trim().length > 200) {
+      sendError(res, "Search query must be 200 characters or less", 400);
       return;
     }
 
@@ -421,11 +481,19 @@ export const searchQuestions = async (req: AuthRequest, res: Response) => {
     if (req.query.status) filter.status = req.query.status as string;
     if (req.query.difficulty) filter.difficulty = req.query.difficulty as string;
 
-    const questions = await Question.find(filter).sort({ updatedAt: -1 });
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
+    const skip = (page - 1) * limit;
 
-    res.status(200).json(questions);
+    const [questions, total] = await Promise.all([
+      Question.find(filter).sort({ updatedAt: -1 }).skip(skip).limit(limit),
+      Question.countDocuments(filter),
+    ]);
+
+    sendPaginated(res, questions, { page, limit, total, totalPages: Math.ceil(total / limit) });
   } catch (error) {
-    res.status(500).json({ message: "Error searching questions" });
+    logger.error((error as Error).message);
+    sendError(res, "Error searching questions");
   }
 };
 
@@ -443,9 +511,10 @@ export const getAllTags = async (req: AuthRequest, res: Response) => {
     ]);
 
     const tags = result.map((r) => ({ tag: r._id, count: r.count }));
-    res.status(200).json(tags);
+    sendSuccess(res, tags);
   } catch (error) {
-    res.status(500).json({ message: "Error fetching tags" });
+    logger.error((error as Error).message);
+    sendError(res, "Error fetching tags");
   }
 };
 
@@ -469,9 +538,10 @@ export const getAllTopics = async (req: AuthRequest, res: Response) => {
     ]);
 
     const topics = result.map((r) => ({ topic: r._id, count: r.count }));
-    res.status(200).json(topics);
+    sendSuccess(res, topics);
   } catch (error) {
-    res.status(500).json({ message: "Error fetching topics" });
+    logger.error((error as Error).message);
+    sendError(res, "Error fetching topics");
   }
 };
 
@@ -486,26 +556,30 @@ export const getAllSources = async (req: AuthRequest, res: Response) => {
     ]);
 
     const sources = result.map((r) => ({ source: r._id, count: r.count }));
-    res.status(200).json(sources);
+    sendSuccess(res, sources);
   } catch (error) {
-    res.status(500).json({ message: "Error fetching sources" });
+    logger.error((error as Error).message);
+    sendError(res, "Error fetching sources");
   }
 };
 
 // ---- Bulk Operations ----
 
 export const bulkDeleteQuestions = async (req: AuthRequest, res: Response) => {
+  const session = await mongoose.startSession();
   try {
+    session.startTransaction();
     const userId = req.user?.id;
     const { ids } = req.body;
 
     if (!Array.isArray(ids) || ids.length === 0) {
-      res.status(400).json({ message: "ids must be a non-empty array" });
+      await session.abortTransaction();
+      sendError(res, "ids must be a non-empty array", 400);
       return;
     }
 
     // Get questions before deleting to update daily task counters
-    const questions = await Question.find({ _id: { $in: ids }, userId });
+    const questions = await Question.find({ _id: { $in: ids }, userId }).session(session);
 
     // Group by daily task and count (skip backlog questions with no daily task)
     const dailyTaskUpdates = new Map<string, { added: number; solved: number }>();
@@ -518,8 +592,13 @@ export const bulkDeleteQuestions = async (req: AuthRequest, res: Response) => {
       if (q.status === QuestionStatus.Solved) update.solved += 1;
     }
 
-    // Delete questions
-    const deleteResult = await Question.deleteMany({ _id: { $in: ids }, userId });
+    // Soft delete questions
+    const now = new Date();
+    const softDeleteResult = await Question.updateMany(
+      { _id: { $in: ids }, userId },
+      { deletedAt: now },
+      { session }
+    );
 
     // Update daily task counters
     for (const [dailyTaskId, counts] of dailyTaskUpdates) {
@@ -528,16 +607,26 @@ export const bulkDeleteQuestions = async (req: AuthRequest, res: Response) => {
           addedQuestionCount: -counts.added,
           solvedQuestionCount: -counts.solved,
         },
-      });
+      }, { session });
+    }
+
+    await session.commitTransaction();
+
+    // Recompute statuses outside the transaction
+    for (const [dailyTaskId] of dailyTaskUpdates) {
       await recomputeDailyTaskStatus(dailyTaskId);
     }
 
-    res.status(200).json({
-      message: `Deleted ${deleteResult.deletedCount} questions`,
-      deletedCount: deleteResult.deletedCount,
+    sendSuccess(res, {
+      message: `Deleted ${softDeleteResult.modifiedCount} questions`,
+      deletedCount: softDeleteResult.modifiedCount,
     });
   } catch (error) {
-    res.status(500).json({ message: "Error deleting questions" });
+    await session.abortTransaction();
+    logger.error((error as Error).message);
+    sendError(res, "Error deleting questions");
+  } finally {
+    session.endSession();
   }
 };
 
@@ -570,7 +659,7 @@ export const deduplicateQuestions = async (req: AuthRequest, res: Response) => {
     ]);
 
     if (duplicates.length === 0) {
-      res.status(200).json({ message: "No duplicates found", deleted: 0, groups: [] });
+      sendSuccess(res, { message: "No duplicates found", deleted: 0, groups: [] });
       return;
     }
 
@@ -626,8 +715,8 @@ export const deduplicateQuestions = async (req: AuthRequest, res: Response) => {
       if (q.status === QuestionStatus.Solved) update.solved += 1;
     }
 
-    // Delete duplicates
-    await Question.deleteMany({ _id: { $in: idsToDelete }, userId });
+    // Soft delete duplicates
+    await Question.updateMany({ _id: { $in: idsToDelete }, userId }, { deletedAt: new Date() });
 
     // Update daily task counters
     for (const [dailyTaskId, counts] of dailyTaskUpdates) {
@@ -640,13 +729,14 @@ export const deduplicateQuestions = async (req: AuthRequest, res: Response) => {
       await recomputeDailyTaskStatus(dailyTaskId);
     }
 
-    res.status(200).json({
+    sendSuccess(res, {
       message: `Deleted ${idsToDelete.length} duplicate questions`,
       deleted: idsToDelete.length,
       groups,
     });
   } catch (error) {
-    res.status(500).json({ message: "Error deduplicating questions" });
+    logger.error((error as Error).message);
+    sendError(res, "Error deduplicating questions");
   }
 };
 
@@ -671,9 +761,10 @@ export const createBacklogQuestion = async (req: AuthRequest, res: Response) => 
       tags,
     });
 
-    res.status(201).json(question);
+    sendSuccess(res, question, 201);
   } catch (error) {
-    res.status(500).json({ message: "Error creating backlog question" });
+    logger.error((error as Error).message);
+    sendError(res, "Error creating backlog question");
   }
 };
 
@@ -698,12 +789,10 @@ export const getBacklogQuestions = async (req: AuthRequest, res: Response) => {
       Question.countDocuments(filter),
     ]);
 
-    res.status(200).json({
-      questions,
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
-    });
+    sendPaginated(res, questions, { page, limit, total, totalPages: Math.ceil(total / limit) });
   } catch (error) {
-    res.status(500).json({ message: "Error fetching backlog questions" });
+    logger.error((error as Error).message);
+    sendError(res, "Error fetching backlog questions");
   }
 };
 
@@ -714,18 +803,18 @@ export const moveToDailyTask = async (req: AuthRequest, res: Response) => {
 
     const question = await Question.findOne({ _id: req.params.id, userId });
     if (!question) {
-      res.status(404).json({ message: "Question not found" });
+      sendError(res, "Question not found", 404);
       return;
     }
 
     if (question.dailyTask) {
-      res.status(400).json({ message: "Question is already assigned to a daily task" });
+      sendError(res, "Question is already assigned to a daily task", 400);
       return;
     }
 
     const dailyTask = await DailyTask.findOne({ _id: dailyTaskId, userId });
     if (!dailyTask) {
-      res.status(404).json({ message: "Daily task not found" });
+      sendError(res, "Daily task not found", 404);
       return;
     }
 
@@ -738,9 +827,10 @@ export const moveToDailyTask = async (req: AuthRequest, res: Response) => {
     });
     await recomputeDailyTaskStatus(dailyTask._id.toString());
 
-    res.status(200).json(question);
+    sendSuccess(res, question);
   } catch (error) {
-    res.status(500).json({ message: "Error moving question to daily task" });
+    logger.error((error as Error).message);
+    sendError(res, "Error moving question to daily task");
   }
 };
 
@@ -750,13 +840,13 @@ export const bulkMoveToDailyTask = async (req: AuthRequest, res: Response) => {
     const { questionIds, dailyTaskId } = req.body;
 
     if (!Array.isArray(questionIds) || questionIds.length === 0) {
-      res.status(400).json({ message: "questionIds must be a non-empty array" });
+      sendError(res, "questionIds must be a non-empty array", 400);
       return;
     }
 
     const dailyTask = await DailyTask.findOne({ _id: dailyTaskId, userId });
     if (!dailyTask) {
-      res.status(404).json({ message: "Daily task not found" });
+      sendError(res, "Daily task not found", 404);
       return;
     }
 
@@ -779,11 +869,12 @@ export const bulkMoveToDailyTask = async (req: AuthRequest, res: Response) => {
       await recomputeDailyTaskStatus(dailyTask._id.toString());
     }
 
-    res.status(200).json({
+    sendSuccess(res, {
       movedCount: backlogQuestions.length,
       skippedCount: questionIds.length - backlogQuestions.length,
     });
   } catch (error) {
-    res.status(500).json({ message: "Error moving questions to daily task" });
+    logger.error((error as Error).message);
+    sendError(res, "Error moving questions to daily task");
   }
 };

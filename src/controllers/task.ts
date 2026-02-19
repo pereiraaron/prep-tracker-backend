@@ -6,6 +6,8 @@ import { AuthRequest } from "../types/auth";
 import { TaskStatus } from "../types/task";
 import { DailyTaskStatus } from "../types/dailyTask";
 import { isTaskOnDate, getDayRange, toISTDateString, toISTMidnight } from "../utils/recurrence";
+import { sendSuccess, sendPaginated, sendError } from "../utils/response";
+import { logger } from "../utils/logger";
 
 const computeSummary = (items: Array<{ status: string }>) => {
   const summary = { total: items.length, completed: 0, incomplete: 0, in_progress: 0, pending: 0 };
@@ -62,9 +64,10 @@ export const createTask = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    res.status(201).json(task);
+    sendSuccess(res, task, 201);
   } catch (error) {
-    res.status(500).json({ message: "Error creating task" });
+    logger.error((error as Error).message);
+    sendError(res, "Error creating task");
   }
 };
 
@@ -88,12 +91,10 @@ export const getAllTasks = async (req: AuthRequest, res: Response) => {
       Task.countDocuments(filter),
     ]);
 
-    res.status(200).json({
-      tasks,
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
-    });
+    sendPaginated(res, tasks, { page, limit, total, totalPages: Math.ceil(total / limit) });
   } catch (error) {
-    res.status(500).json({ message: "Error fetching tasks" });
+    logger.error((error as Error).message);
+    sendError(res, "Error fetching tasks");
   }
 };
 
@@ -103,13 +104,14 @@ export const getTaskById = async (req: AuthRequest, res: Response) => {
     const task = await Task.findOne({ _id: req.params.id, userId });
 
     if (!task) {
-      res.status(404).json({ message: "Task not found" });
+      sendError(res, "Task not found", 404);
       return;
     }
 
-    res.status(200).json(task);
+    sendSuccess(res, task);
   } catch (error) {
-    res.status(500).json({ message: "Error fetching task" });
+    logger.error((error as Error).message);
+    sendError(res, "Error fetching task");
   }
 };
 
@@ -132,13 +134,14 @@ export const updateTask = async (req: AuthRequest, res: Response) => {
     );
 
     if (!task) {
-      res.status(404).json({ message: "Task not found" });
+      sendError(res, "Task not found", 404);
       return;
     }
 
-    res.status(200).json(task);
+    sendSuccess(res, task);
   } catch (error) {
-    res.status(500).json({ message: "Error updating task" });
+    logger.error((error as Error).message);
+    sendError(res, "Error updating task");
   }
 };
 
@@ -148,19 +151,20 @@ export const deleteTask = async (req: AuthRequest, res: Response) => {
     const task = await Task.findOneAndDelete({ _id: req.params.id, userId });
 
     if (!task) {
-      res.status(404).json({ message: "Task not found" });
+      sendError(res, "Task not found", 404);
       return;
     }
 
-    // Clean up all daily tasks and questions
+    // Clean up daily tasks (hard delete) and soft-delete questions
     await Promise.all([
       DailyTask.deleteMany({ task: task._id, userId }),
-      Question.deleteMany({ task: task._id, userId }),
+      Question.updateMany({ task: task._id, userId }, { deletedAt: new Date() }),
     ]);
 
-    res.status(200).json({ message: "Task deleted" });
+    sendSuccess(res, { message: "Task deleted" });
   } catch (error) {
-    res.status(500).json({ message: "Error deleting task" });
+    logger.error((error as Error).message);
+    sendError(res, "Error deleting task");
   }
 };
 
@@ -246,7 +250,7 @@ const materializeDailyTasksForDate = async (userId: string, date: Date) => {
     const cat = dailyTask.category || "unknown";
     if (!groupMap.has(cat)) groupMap.set(cat, { category: cat, dailyTasks: [] });
     groupMap.get(cat)!.dailyTasks.push({
-      ...dailyTask.toObject(),
+      ...dailyTask.toJSON(),
       questions: questionsByDailyTask.get(dailyTask._id.toString()) || [],
     });
   }
@@ -264,19 +268,17 @@ export const getToday = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
     if (!userId) {
-      res.status(401).json({ message: "Unauthorized" });
+      sendError(res, "Unauthorized", 401);
       return;
     }
 
     const today = new Date();
     const result = await materializeDailyTasksForDate(userId, today);
 
-    res.status(200).json({
-      date: toISTDateString(today),
-      ...result,
-    });
+    sendSuccess(res, { date: toISTDateString(today), ...result });
   } catch (error) {
-    res.status(500).json({ message: "Error fetching today's tasks" });
+    logger.error((error as Error).message);
+    sendError(res, "Error fetching today's tasks");
   }
 };
 
@@ -284,7 +286,7 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
     if (!userId) {
-      res.status(401).json({ message: "Unauthorized" });
+      sendError(res, "Unauthorized", 401);
       return;
     }
 
@@ -292,10 +294,7 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
     if (req.query.date) {
       const date = new Date(req.query.date as string);
       const result = await materializeDailyTasksForDate(userId, date);
-      res.status(200).json({
-        date: toISTDateString(date),
-        ...result,
-      });
+      sendSuccess(res, { date: toISTDateString(date), ...result });
       return;
     }
 
@@ -329,7 +328,7 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
         const dateStr = toISTDateString(dailyTask.date);
         if (!dayMap.has(dateStr)) dayMap.set(dateStr, []);
         dayMap.get(dateStr)!.push({
-          ...dailyTask.toObject(),
+          ...dailyTask.toJSON(),
           questions: questionsByDailyTask.get(dailyTask._id.toString()) || [],
         });
       }
@@ -347,17 +346,14 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
         current.setDate(current.getDate() + 1);
       }
 
-      res.status(200).json({
-        from: toISTDateString(from),
-        to: toISTDateString(to),
-        days,
-      });
+      sendSuccess(res, { from: toISTDateString(from), to: toISTDateString(to), days });
       return;
     }
 
-    res.status(400).json({ message: "Provide ?date= or ?from=&to= query parameters" });
+    sendError(res, "Provide ?date= or ?from=&to= query parameters", 400);
   } catch (error) {
-    res.status(500).json({ message: "Error fetching task history" });
+    logger.error((error as Error).message);
+    sendError(res, "Error fetching task history");
   }
 };
 
@@ -369,17 +365,15 @@ export const getDailyTaskById = async (req: AuthRequest, res: Response) => {
     const dailyTask = await DailyTask.findOne({ _id: req.params.id, userId });
 
     if (!dailyTask) {
-      res.status(404).json({ message: "Daily task not found" });
+      sendError(res, "Daily task not found", 404);
       return;
     }
 
     const questions = await Question.find({ dailyTask: dailyTask._id });
 
-    res.status(200).json({
-      ...dailyTask.toObject(),
-      questions,
-    });
+    sendSuccess(res, { ...dailyTask.toJSON(), questions });
   } catch (error) {
-    res.status(500).json({ message: "Error fetching daily task" });
+    logger.error((error as Error).message);
+    sendError(res, "Error fetching daily task");
   }
 };

@@ -31,10 +31,12 @@ const dailyTaskSchema = new Schema<IDailyTask>(
     addedQuestionCount: {
       type: Number,
       default: 0,
+      min: 0,
     },
     solvedQuestionCount: {
       type: Number,
       default: 0,
+      min: 0,
     },
     status: {
       type: String,

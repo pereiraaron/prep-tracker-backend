@@ -26,6 +26,18 @@ import { DailyTask } from "../../models/DailyTask";
 import { QuestionStatus } from "../../types/question";
 import { DailyTaskStatus } from "../../types/dailyTask";
 
+jest.mock("mongoose", () => ({
+  __esModule: true,
+  default: {
+    startSession: jest.fn().mockResolvedValue({
+      startTransaction: jest.fn(),
+      commitTransaction: jest.fn().mockResolvedValue(undefined),
+      abortTransaction: jest.fn().mockResolvedValue(undefined),
+      endSession: jest.fn(),
+    }),
+  },
+}));
+
 jest.mock("../../models/Question", () => ({
   Question: {
     create: jest.fn(),
@@ -92,6 +104,7 @@ const mockQuestionDoc = (overrides: Record<string, any> = {}) => ({
   solvedAt: undefined as Date | undefined,
   nextReviewAt: undefined as Date | undefined,
   lastReviewedAt: undefined as Date | undefined,
+  deletedAt: undefined as Date | undefined,
   save: jest.fn().mockResolvedValue(undefined),
   ...overrides,
 });
@@ -124,7 +137,7 @@ describe("createQuestion", () => {
     await createQuestion(req, res);
 
     expect(res.status).toHaveBeenCalledWith(201);
-    expect(res.json).toHaveBeenCalledWith(question);
+    expect(res.json).toHaveBeenCalledWith({ success: true, data: question });
     expect(DailyTask.findByIdAndUpdate).toHaveBeenCalledWith("dt1", {
       $inc: { addedQuestionCount: 1 },
     });
@@ -174,7 +187,8 @@ describe("getAllQuestions", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0];
-    expect(body.questions).toEqual(questions);
+    expect(body.success).toBe(true);
+    expect(body.data).toEqual(questions);
     expect(body.pagination).toEqual({ page: 1, limit: 50, total: 1, totalPages: 1 });
   });
 
@@ -231,7 +245,7 @@ describe("getQuestionById", () => {
     await getQuestionById(req, res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(res.json).toHaveBeenCalledWith(question);
+    expect(res.json).toHaveBeenCalledWith({ success: true, data: question });
   });
 
   it("returns 404 when not found", async () => {
@@ -320,9 +334,11 @@ describe("updateQuestion", () => {
 
 // ---- deleteQuestion ----
 describe("deleteQuestion", () => {
-  it("deletes question and updates daily task counters for solved question", async () => {
+  it("soft-deletes question and updates daily task counters for solved question", async () => {
     const question = mockQuestionDoc({ status: QuestionStatus.Solved, dailyTask: "dt1" });
-    (Question.findOneAndDelete as jest.Mock).mockResolvedValue(question);
+    (Question.findOne as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(question),
+    });
     (DailyTask.findByIdAndUpdate as jest.Mock).mockResolvedValue({});
     setupRecompute();
 
@@ -331,27 +347,36 @@ describe("deleteQuestion", () => {
 
     await deleteQuestion(req, res);
 
+    expect(question.deletedAt).toBeDefined();
+    expect(question.save).toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(DailyTask.findByIdAndUpdate).toHaveBeenCalledWith("dt1", {
-      $inc: { addedQuestionCount: -1, solvedQuestionCount: -1 },
-    });
+    expect(DailyTask.findByIdAndUpdate).toHaveBeenCalledWith(
+      "dt1",
+      { $inc: { addedQuestionCount: -1, solvedQuestionCount: -1 } },
+      expect.objectContaining({ session: expect.anything() })
+    );
   });
 
-  it("deletes backlog question without touching daily task", async () => {
+  it("soft-deletes backlog question without touching daily task", async () => {
     const question = mockQuestionDoc({ dailyTask: null });
-    (Question.findOneAndDelete as jest.Mock).mockResolvedValue(question);
+    (Question.findOne as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(question),
+    });
 
     const req = mockReq({ params: { id: "q1" } });
     const res = mockRes();
 
     await deleteQuestion(req, res);
 
+    expect(question.deletedAt).toBeDefined();
     expect(res.status).toHaveBeenCalledWith(200);
     expect(DailyTask.findByIdAndUpdate).not.toHaveBeenCalled();
   });
 
   it("returns 404 when not found", async () => {
-    (Question.findOneAndDelete as jest.Mock).mockResolvedValue(null);
+    (Question.findOne as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(null),
+    });
 
     const req = mockReq({ params: { id: "invalid" } });
     const res = mockRes();
@@ -370,7 +395,9 @@ describe("solveQuestion", () => {
       status: QuestionStatus.Pending,
       reviewCount: 0,
     });
-    (Question.findOne as jest.Mock).mockResolvedValue(question);
+    (Question.findOne as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(question),
+    });
     (DailyTask.findByIdAndUpdate as jest.Mock).mockResolvedValue({});
     setupRecompute();
 
@@ -385,7 +412,7 @@ describe("solveQuestion", () => {
     expect(question.save).toHaveBeenCalled();
     expect(DailyTask.findByIdAndUpdate).toHaveBeenCalledWith("dt1", {
       $inc: { solvedQuestionCount: 1 },
-    });
+    }, expect.objectContaining({ session: expect.anything() }));
     expect(res.status).toHaveBeenCalledWith(200);
   });
 
@@ -397,7 +424,9 @@ describe("solveQuestion", () => {
       reviewCount: 2,
       nextReviewAt: existingReviewDate,
     });
-    (Question.findOne as jest.Mock).mockResolvedValue(question);
+    (Question.findOne as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(question),
+    });
     (DailyTask.findByIdAndUpdate as jest.Mock).mockResolvedValue({});
     setupRecompute();
 
@@ -411,7 +440,9 @@ describe("solveQuestion", () => {
 
   it("returns 400 for backlog question", async () => {
     const question = mockQuestionDoc({ dailyTask: null });
-    (Question.findOne as jest.Mock).mockResolvedValue(question);
+    (Question.findOne as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(question),
+    });
 
     const req = mockReq({ params: { id: "q1" } });
     const res = mockRes();
@@ -427,7 +458,9 @@ describe("solveQuestion", () => {
       dailyTask: "dt1",
       status: QuestionStatus.Solved,
     });
-    (Question.findOne as jest.Mock).mockResolvedValue(question);
+    (Question.findOne as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(question),
+    });
 
     const req = mockReq({ params: { id: "q1" } });
     const res = mockRes();
@@ -438,7 +471,9 @@ describe("solveQuestion", () => {
   });
 
   it("returns 404 when not found", async () => {
-    (Question.findOne as jest.Mock).mockResolvedValue(null);
+    (Question.findOne as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(null),
+    });
 
     const req = mockReq({ params: { id: "invalid" } });
     const res = mockRes();
@@ -460,7 +495,9 @@ describe("resetQuestion", () => {
       nextReviewAt: new Date(),
       lastReviewedAt: new Date(),
     });
-    (Question.findOne as jest.Mock).mockResolvedValue(question);
+    (Question.findOne as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(question),
+    });
     (DailyTask.findByIdAndUpdate as jest.Mock).mockResolvedValue({});
     setupRecompute();
 
@@ -477,12 +514,14 @@ describe("resetQuestion", () => {
     expect(question.save).toHaveBeenCalled();
     expect(DailyTask.findByIdAndUpdate).toHaveBeenCalledWith("dt1", {
       $inc: { solvedQuestionCount: -1 },
-    });
+    }, expect.objectContaining({ session: expect.anything() }));
   });
 
   it("returns 400 when question is not solved", async () => {
     const question = mockQuestionDoc({ status: QuestionStatus.Pending });
-    (Question.findOne as jest.Mock).mockResolvedValue(question);
+    (Question.findOne as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(question),
+    });
 
     const req = mockReq({ params: { id: "q1" } });
     const res = mockRes();
@@ -494,7 +533,9 @@ describe("resetQuestion", () => {
   });
 
   it("returns 404 when not found", async () => {
-    (Question.findOne as jest.Mock).mockResolvedValue(null);
+    (Question.findOne as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(null),
+    });
 
     const req = mockReq({ params: { id: "invalid" } });
     const res = mockRes();
@@ -609,11 +650,16 @@ describe("reviewQuestion", () => {
 
 // ---- getDueForReview ----
 describe("getDueForReview", () => {
-  it("returns questions due for review", async () => {
+  it("returns paginated questions due for review", async () => {
     const questions = [mockQuestionDoc({ status: QuestionStatus.Solved })];
     (Question.find as jest.Mock).mockReturnValue({
-      sort: jest.fn().mockResolvedValue(questions),
+      sort: jest.fn().mockReturnValue({
+        skip: jest.fn().mockReturnValue({
+          limit: jest.fn().mockResolvedValue(questions),
+        }),
+      }),
     });
+    (Question.countDocuments as jest.Mock).mockResolvedValue(1);
 
     const req = mockReq();
     const res = mockRes();
@@ -621,13 +667,21 @@ describe("getDueForReview", () => {
     await getDueForReview(req, res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(res.json).toHaveBeenCalledWith(questions);
+    const body = res.json.mock.calls[0][0];
+    expect(body.success).toBe(true);
+    expect(body.data).toEqual(questions);
+    expect(body.pagination).toEqual({ page: 1, limit: 50, total: 1, totalPages: 1 });
   });
 
   it("applies topic and difficulty filters", async () => {
     (Question.find as jest.Mock).mockReturnValue({
-      sort: jest.fn().mockResolvedValue([]),
+      sort: jest.fn().mockReturnValue({
+        skip: jest.fn().mockReturnValue({
+          limit: jest.fn().mockResolvedValue([]),
+        }),
+      }),
     });
+    (Question.countDocuments as jest.Mock).mockResolvedValue(0);
 
     const req = mockReq({ query: { topic: "arrays", difficulty: "easy" } });
     const res = mockRes();
@@ -657,8 +711,9 @@ describe("getRevisions", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0];
-    expect(body.current.notes).toBe("current notes");
-    expect(body.revisions.length).toBe(1);
+    expect(body.success).toBe(true);
+    expect(body.data.current.notes).toBe("current notes");
+    expect(body.data.revisions.length).toBe(1);
   });
 
   it("returns 404 when not found", async () => {
@@ -675,11 +730,16 @@ describe("getRevisions", () => {
 
 // ---- searchQuestions ----
 describe("searchQuestions", () => {
-  it("searches questions by query", async () => {
+  it("searches questions by query with pagination", async () => {
     const questions = [mockQuestionDoc()];
     (Question.find as jest.Mock).mockReturnValue({
-      sort: jest.fn().mockResolvedValue(questions),
+      sort: jest.fn().mockReturnValue({
+        skip: jest.fn().mockReturnValue({
+          limit: jest.fn().mockResolvedValue(questions),
+        }),
+      }),
     });
+    (Question.countDocuments as jest.Mock).mockResolvedValue(1);
 
     const req = mockReq({ query: { q: "Two Sum" } });
     const res = mockRes();
@@ -687,13 +747,21 @@ describe("searchQuestions", () => {
     await searchQuestions(req, res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(res.json).toHaveBeenCalledWith(questions);
+    const body = res.json.mock.calls[0][0];
+    expect(body.success).toBe(true);
+    expect(body.data).toEqual(questions);
+    expect(body.pagination).toBeDefined();
   });
 
   it("escapes regex special characters", async () => {
     (Question.find as jest.Mock).mockReturnValue({
-      sort: jest.fn().mockResolvedValue([]),
+      sort: jest.fn().mockReturnValue({
+        skip: jest.fn().mockReturnValue({
+          limit: jest.fn().mockResolvedValue([]),
+        }),
+      }),
     });
+    (Question.countDocuments as jest.Mock).mockResolvedValue(0);
 
     const req = mockReq({ query: { q: "test[0]" } });
     const res = mockRes();
@@ -738,7 +806,7 @@ describe("getAllTags", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0];
-    expect(body).toEqual([
+    expect(body.data).toEqual([
       { tag: "dp", count: 5 },
       { tag: "greedy", count: 3 },
     ]);
@@ -760,7 +828,7 @@ describe("getAllTopics", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0];
-    expect(body).toEqual([
+    expect(body.data).toEqual([
       { topic: "arrays", count: 10 },
       { topic: "trees", count: 5 },
     ]);
@@ -800,7 +868,7 @@ describe("getAllSources", () => {
     await getAllSources(req, res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(res.json.mock.calls[0][0]).toEqual([
+    expect(res.json.mock.calls[0][0].data).toEqual([
       { source: "leetcode", count: 20 },
     ]);
   });
@@ -808,14 +876,16 @@ describe("getAllSources", () => {
 
 // ---- bulkDeleteQuestions ----
 describe("bulkDeleteQuestions", () => {
-  it("deletes questions and updates daily task counters", async () => {
+  it("soft-deletes questions and updates daily task counters", async () => {
     const questions = [
       mockQuestionDoc({ _id: "q1", dailyTask: "dt1", status: QuestionStatus.Solved }),
       mockQuestionDoc({ _id: "q2", dailyTask: "dt1", status: QuestionStatus.Pending }),
       mockQuestionDoc({ _id: "q3", dailyTask: null, status: QuestionStatus.Pending }),
     ];
-    (Question.find as jest.Mock).mockResolvedValue(questions);
-    (Question.deleteMany as jest.Mock).mockResolvedValue({ deletedCount: 3 });
+    (Question.find as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(questions),
+    });
+    (Question.updateMany as jest.Mock).mockResolvedValue({ modifiedCount: 3 });
     (DailyTask.findByIdAndUpdate as jest.Mock).mockResolvedValue({});
     setupRecompute();
 
@@ -826,10 +896,10 @@ describe("bulkDeleteQuestions", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0];
-    expect(body.deletedCount).toBe(3);
+    expect(body.data.deletedCount).toBe(3);
     expect(DailyTask.findByIdAndUpdate).toHaveBeenCalledWith("dt1", {
       $inc: { addedQuestionCount: -2, solvedQuestionCount: -1 },
-    });
+    }, expect.objectContaining({ session: expect.anything() }));
   });
 
   it("returns 400 when ids is not a non-empty array", async () => {
@@ -867,7 +937,7 @@ describe("deduplicateQuestions", () => {
     (Question.find as jest.Mock).mockResolvedValue([
       mockQuestionDoc({ _id: "q2", dailyTask: "dt1", status: QuestionStatus.Pending }),
     ]);
-    (Question.deleteMany as jest.Mock).mockResolvedValue({ deletedCount: 1 });
+    (Question.updateMany as jest.Mock).mockResolvedValue({ modifiedCount: 1 });
     (DailyTask.findByIdAndUpdate as jest.Mock).mockResolvedValue({});
     setupRecompute();
 
@@ -878,9 +948,9 @@ describe("deduplicateQuestions", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0];
-    expect(body.deleted).toBe(1);
-    expect(body.groups[0].kept).toBe("q1"); // Solved one is kept
-    expect(body.groups[0].deleted).toEqual(["q2"]);
+    expect(body.data.deleted).toBe(1);
+    expect(body.data.groups[0].kept).toBe("q1"); // Solved one is kept
+    expect(body.data.groups[0].deleted).toEqual(["q2"]);
   });
 
   it("returns message when no duplicates found", async () => {
@@ -893,8 +963,8 @@ describe("deduplicateQuestions", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0];
-    expect(body.deleted).toBe(0);
-    expect(body.groups).toEqual([]);
+    expect(body.data.deleted).toBe(0);
+    expect(body.data.groups).toEqual([]);
   });
 });
 
@@ -1045,7 +1115,7 @@ describe("bulkMoveToDailyTask", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0];
-    expect(body.movedCount).toBe(2);
+    expect(body.data.movedCount).toBe(2);
     expect(DailyTask.findByIdAndUpdate).toHaveBeenCalledWith("dt1", {
       $inc: { addedQuestionCount: 2 },
     });
@@ -1087,7 +1157,7 @@ describe("bulkMoveToDailyTask", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0];
-    expect(body.movedCount).toBe(0);
-    expect(body.skippedCount).toBe(2);
+    expect(body.data.movedCount).toBe(0);
+    expect(body.data.skippedCount).toBe(2);
   });
 });

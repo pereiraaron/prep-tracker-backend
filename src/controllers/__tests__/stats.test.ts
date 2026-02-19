@@ -70,16 +70,16 @@ describe("getOverview", () => {
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0];
 
-    expect(body.total).toBe(8);
-    expect(body.byStatus.pending).toBe(5);
-    expect(body.byStatus.solved).toBe(3);
-    expect(body.byStatus.in_progress).toBe(0);
-    expect(body.byCategory.dsa).toBe(4);
-    expect(body.byCategory.system_design).toBe(2);
-    expect(body.byCategory.behavioral).toBe(0);
-    expect(body.byDifficulty.easy).toBe(2);
-    expect(body.byDifficulty.hard).toBe(1);
-    expect(body.byDifficulty.medium).toBe(0);
+    expect(body.data.total).toBe(8);
+    expect(body.data.byStatus.pending).toBe(5);
+    expect(body.data.byStatus.solved).toBe(3);
+    expect(body.data.byStatus.in_progress).toBe(0);
+    expect(body.data.byCategory.dsa).toBe(4);
+    expect(body.data.byCategory.system_design).toBe(2);
+    expect(body.data.byCategory.behavioral).toBe(0);
+    expect(body.data.byDifficulty.easy).toBe(2);
+    expect(body.data.byDifficulty.hard).toBe(1);
+    expect(body.data.byDifficulty.medium).toBe(0);
   });
 
   it("returns 500 on error", async () => {
@@ -109,7 +109,7 @@ describe("getCategoryBreakdown", () => {
     await getCategoryBreakdown(req, res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    const body = res.json.mock.calls[0][0];
+    const body = res.json.mock.calls[0][0].data;
 
     const dsa = body.find((c: any) => c.category === PrepCategory.DSA);
     expect(dsa.total).toBe(10);
@@ -143,7 +143,7 @@ describe("getDifficultyBreakdown", () => {
     await getDifficultyBreakdown(req, res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    const body = res.json.mock.calls[0][0];
+    const body = res.json.mock.calls[0][0].data;
 
     const easy = body.find((d: any) => d.difficulty === Difficulty.Easy);
     expect(easy.total).toBe(10);
@@ -168,9 +168,8 @@ describe("getStreaks", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({
-      currentStreak: 0,
-      longestStreak: 0,
-      totalActiveDays: 0,
+      success: true,
+      data: { currentStreak: 0, longestStreak: 0, totalActiveDays: 0 },
     });
   });
 
@@ -187,7 +186,7 @@ describe("getStreaks", () => {
     await getStreaks(req, res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    const body = res.json.mock.calls[0][0];
+    const body = res.json.mock.calls[0][0].data;
     expect(body.totalActiveDays).toBe(3);
     expect(body.longestStreak).toBe(3);
     expect(body.currentStreak).toBe(0);
@@ -209,7 +208,7 @@ describe("getStreaks", () => {
     await getStreaks(req, res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    const body = res.json.mock.calls[0][0];
+    const body = res.json.mock.calls[0][0].data;
     expect(body.currentStreak).toBe(0);
   });
 });
@@ -225,7 +224,7 @@ describe("getProgress", () => {
     await getProgress(req, res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    const body = res.json.mock.calls[0][0];
+    const body = res.json.mock.calls[0][0].data;
     expect(body.length).toBeGreaterThanOrEqual(30);
     expect(body[0]).toHaveProperty("date");
     expect(body[0]).toHaveProperty("solved", 0);
@@ -247,7 +246,7 @@ describe("getProgress", () => {
     await getProgress(req, res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    const body = res.json.mock.calls[0][0];
+    const body = res.json.mock.calls[0][0].data;
     const targetEntry = body.find((d: any) => d.date === dateStr);
     expect(targetEntry).toBeDefined();
     expect(targetEntry.solved).toBe(5);
