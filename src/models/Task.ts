@@ -8,6 +8,7 @@ const taskSchema = new Schema<ITask>(
       $type: String,
       required: true,
       trim: true,
+      maxlength: 200,
     },
     userId: {
       $type: String,
@@ -22,6 +23,7 @@ const taskSchema = new Schema<ITask>(
       $type: Number,
       required: true,
       min: 1,
+      max: 100,
     },
     isRecurring: {
       $type: Boolean,

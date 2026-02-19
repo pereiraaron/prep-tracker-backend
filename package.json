@@ -12,7 +12,8 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage && rm -rf coverage",
-    "setup-db": "ts-node scripts/setup-db.ts"
+    "setup-db": "ts-node scripts/setup-db.ts",
+    "migrate:v3": "ts-node scripts/migrate-v3-soft-delete.ts"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
@@ -31,6 +32,7 @@
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.3",
-    "mongoose": "^8.15.0"
+    "mongoose": "^8.15.0",
+    "zod": "^4.3.6"
   }
 }

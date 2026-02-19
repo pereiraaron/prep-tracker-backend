@@ -6,6 +6,8 @@ import { PrepCategory } from "../types/category";
 import { QuestionStatus, Difficulty } from "../types/question";
 import { DailyTaskStatus } from "../types/dailyTask";
 import { toISTDateString, toISTMidnight } from "../utils/recurrence";
+import { sendSuccess, sendError } from "../utils/response";
+import { logger } from "../utils/logger";
 
 /**
  * GET /api/stats/overview
@@ -55,15 +57,10 @@ export const getOverview = async (req: AuthRequest, res: Response) => {
     for (const d of Object.values(Difficulty)) difficultyMap[d] = 0;
     for (const row of byDifficulty) difficultyMap[row._id] = row.count;
 
-    res.status(200).json({
-      total,
-      backlogCount,
-      byStatus: statusMap,
-      byCategory: categoryMap,
-      byDifficulty: difficultyMap,
-    });
+    sendSuccess(res, { total, backlogCount, byStatus: statusMap, byCategory: categoryMap, byDifficulty: difficultyMap });
   } catch (error) {
-    res.status(500).json({ message: "Error fetching overview stats" });
+    logger.error((error as Error).message);
+    sendError(res, "Error fetching overview stats");
   }
 };
 
@@ -119,9 +116,10 @@ export const getCategoryBreakdown = async (req: AuthRequest, res: Response) => {
       completionRate: stats.total > 0 ? Math.round((stats.solved / stats.total) * 100) : 0,
     }));
 
-    res.status(200).json(breakdown);
+    sendSuccess(res, breakdown);
   } catch (error) {
-    res.status(500).json({ message: "Error fetching category breakdown" });
+    logger.error((error as Error).message);
+    sendError(res, "Error fetching category breakdown");
   }
 };
 
@@ -168,9 +166,10 @@ export const getDifficultyBreakdown = async (req: AuthRequest, res: Response) =>
       completionRate: stats.total > 0 ? Math.round((stats.solved / stats.total) * 100) : 0,
     }));
 
-    res.status(200).json(breakdown);
+    sendSuccess(res, breakdown);
   } catch (error) {
-    res.status(500).json({ message: "Error fetching difficulty breakdown" });
+    logger.error((error as Error).message);
+    sendError(res, "Error fetching difficulty breakdown");
   }
 };
 
@@ -231,9 +230,10 @@ export const getTopicBreakdown = async (req: AuthRequest, res: Response) => {
       }))
       .sort((a, b) => b.total - a.total);
 
-    res.status(200).json(breakdown);
+    sendSuccess(res, breakdown);
   } catch (error) {
-    res.status(500).json({ message: "Error fetching topic breakdown" });
+    logger.error((error as Error).message);
+    sendError(res, "Error fetching topic breakdown");
   }
 };
 
@@ -259,7 +259,7 @@ export const getStreaks = async (req: AuthRequest, res: Response) => {
     ]);
 
     if (completions.length === 0) {
-      res.status(200).json({ currentStreak: 0, longestStreak: 0, totalActiveDays: 0 });
+      sendSuccess(res, { currentStreak: 0, longestStreak: 0, totalActiveDays: 0 });
       return;
     }
 
@@ -305,13 +305,10 @@ export const getStreaks = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    res.status(200).json({
-      currentStreak,
-      longestStreak,
-      totalActiveDays: dates.length,
-    });
+    sendSuccess(res, { currentStreak, longestStreak, totalActiveDays: dates.length });
   } catch (error) {
-    res.status(500).json({ message: "Error fetching streak stats" });
+    logger.error((error as Error).message);
+    sendError(res, "Error fetching streak stats");
   }
 };
 
@@ -361,8 +358,9 @@ export const getProgress = async (req: AuthRequest, res: Response) => {
       dateStr = toISTDateString(current);
     }
 
-    res.status(200).json(result);
+    sendSuccess(res, result);
   } catch (error) {
-    res.status(500).json({ message: "Error fetching progress stats" });
+    logger.error((error as Error).message);
+    sendError(res, "Error fetching progress stats");
   }
 };

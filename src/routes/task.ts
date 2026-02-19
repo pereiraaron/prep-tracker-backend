@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { authenticate } from "../middleware";
+import { validate } from "../middleware/validate";
+import { createTaskSchema, updateTaskSchema } from "../validators/task";
 import {
   createTask,
   getAllTasks,
@@ -18,12 +20,12 @@ router.get("/today", authenticate, getToday);
 router.get("/history", authenticate, getHistory);
 router.get("/daily/:id", authenticate, getDailyTaskById);
 
-router.route("/").get(authenticate, getAllTasks).post(authenticate, createTask);
+router.route("/").get(authenticate, getAllTasks).post(authenticate, validate(createTaskSchema), createTask);
 
 router
   .route("/:id")
   .get(authenticate, getTaskById)
-  .put(authenticate, updateTask)
+  .put(authenticate, validate(updateTaskSchema), updateTask)
   .delete(authenticate, deleteTask);
 
 export default router;

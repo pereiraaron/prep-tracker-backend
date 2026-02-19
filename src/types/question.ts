@@ -45,6 +45,7 @@ export interface IQuestion extends Document {
   nextReviewAt?: Date;
   lastReviewedAt?: Date;
   solvedAt?: Date;
+  deletedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
