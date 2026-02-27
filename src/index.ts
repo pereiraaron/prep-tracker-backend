@@ -51,12 +51,25 @@ app.use(express.json({ limit: "1mb" }));
 // Logging
 app.use(requestLogger);
 
-// Swagger docs
+// Swagger docs (relaxed CSP for CDN scripts)
 app.get("/api-docs/spec.json", (_, res) => {
   res.status(200).json(swaggerSpec);
 });
-app.get("/api-docs", (_, res) => {
-  res.status(200).send(`<!DOCTYPE html>
+app.get(
+  "/api-docs",
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "https://unpkg.com"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://unpkg.com"],
+        imgSrc: ["'self'", "data:", "https://unpkg.com"],
+        connectSrc: ["'self'", "https://unpkg.com"],
+      },
+    },
+  }),
+  (_, res) => {
+    res.status(200).send(`<!DOCTYPE html>
 <html><head>
 <title>Prep Tracker API</title>
 <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
@@ -65,7 +78,8 @@ app.get("/api-docs", (_, res) => {
 <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
 <script>SwaggerUIBundle({url:"/api-docs/spec.json",dom_id:"#swagger-ui"})</script>
 </body></html>`);
-});
+  }
+);
 
 // Ensure DB is connected before handling requests (critical for serverless)
 app.use(async (_req, _res, next) => {
