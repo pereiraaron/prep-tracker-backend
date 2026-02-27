@@ -1,8 +1,8 @@
-import { Document, Types } from "mongoose";
+import { Document } from "mongoose";
+import { PrepCategory } from "./category";
 
 export enum QuestionStatus {
   Pending = "pending",
-  InProgress = "in_progress",
   Solved = "solved",
 }
 
@@ -15,21 +15,15 @@ export enum Difficulty {
 export enum QuestionSource {
   Leetcode = "leetcode",
   GreatFrontend = "greatfrontend",
+  GeeksforGeeks = "geeksforgeeks",
+  Linkedin = "linkedin",
+  Medium = "medium",
   Other = "other",
 }
 
-export interface IRevision {
-  notes?: string;
-  solution?: string;
-  editedAt: Date;
-}
-
-export const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 60];
-
 export interface IQuestion extends Document {
-  dailyTask: Types.ObjectId | null;
-  task: Types.ObjectId | null;
   userId: string;
+  category: PrepCategory | null;
   title: string;
   notes?: string;
   solution?: string;
@@ -39,13 +33,9 @@ export interface IQuestion extends Document {
   source?: QuestionSource;
   url?: string;
   tags: string[];
+  companyTags: string[];
   starred: boolean;
-  revisions: IRevision[];
-  reviewCount: number;
-  nextReviewAt?: Date;
-  lastReviewedAt?: Date;
   solvedAt?: Date;
-  deletedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }

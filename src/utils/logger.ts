@@ -11,10 +11,7 @@ const formatMessage = (level: LogLevel, message: string, meta?: Record<string, a
 };
 
 export const logger = {
-  info: (message: string, meta?: Record<string, any>) =>
-    console.log(formatMessage("info", message, meta)),
-  warn: (message: string, meta?: Record<string, any>) =>
-    console.warn(formatMessage("warn", message, meta)),
-  error: (message: string, meta?: Record<string, any>) =>
-    console.error(formatMessage("error", message, meta)),
+  info: (message: string, meta?: Record<string, any>) => console.log(formatMessage("info", message, meta)),
+  warn: (message: string, meta?: Record<string, any>) => console.warn(formatMessage("warn", message, meta)),
+  error: (message: string, meta?: Record<string, any>) => console.error(formatMessage("error", message, meta)),
 };

@@ -4,4 +4,6 @@ export enum PrepCategory {
   Behavioral = "behavioral",
   MachineCoding = "machine_coding",
   LanguageFramework = "language_framework",
+  Theory = "theory",
+  Quiz = "quiz",
 }

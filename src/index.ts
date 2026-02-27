@@ -6,7 +6,6 @@ import { connectToDB } from "./db/connect";
 import { requestLogger } from "./middleware/requestLogger";
 import { errorHandler } from "./middleware/errorHandler";
 import swaggerSpec from "./swagger";
-import taskRoutes from "./routes/task";
 import questionRoutes from "./routes/question";
 import statsRoutes from "./routes/stats";
 
@@ -40,7 +39,6 @@ app.get("/api-docs", (_, res) => {
 });
 
 // Routes
-app.use("/api/tasks", taskRoutes);
 app.use("/api/questions", questionRoutes);
 app.use("/api/stats", statsRoutes);
 

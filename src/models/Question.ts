@@ -1,30 +1,17 @@
 import { Schema, model } from "mongoose";
 import { IQuestion, QuestionStatus, Difficulty, QuestionSource } from "../types/question";
-
-const revisionSchema = new Schema(
-  {
-    notes: { $type: String },
-    solution: { $type: String },
-    editedAt: { $type: Date, required: true },
-  },
-  { _id: false, typeKey: "$type" }
-);
+import { PrepCategory } from "../types/category";
 
 const questionSchema = new Schema<IQuestion>(
   {
-    dailyTask: {
-      $type: Schema.Types.ObjectId,
-      ref: "DailyTask",
-      default: null,
-    },
-    task: {
-      $type: Schema.Types.ObjectId,
-      ref: "Task",
-      default: null,
-    },
     userId: {
       $type: String,
       required: true,
+    },
+    category: {
+      $type: String,
+      enum: [...Object.values(PrepCategory), null],
+      default: null,
     },
     title: {
       $type: String,
@@ -70,31 +57,17 @@ const questionSchema = new Schema<IQuestion>(
       default: [],
       validate: [(v: string[]) => v.length <= 20, "Cannot have more than 20 tags"],
     },
+    companyTags: {
+      $type: [String],
+      default: [],
+      validate: [(v: string[]) => v.length <= 20, "Cannot have more than 20 company tags"],
+    },
     starred: {
       $type: Boolean,
       default: false,
     },
-    revisions: {
-      $type: [revisionSchema],
-      default: [],
-    },
-    reviewCount: {
-      $type: Number,
-      default: 0,
-      min: 0,
-    },
-    nextReviewAt: {
-      $type: Date,
-    },
-    lastReviewedAt: {
-      $type: Date,
-    },
     solvedAt: {
       $type: Date,
-    },
-    deletedAt: {
-      $type: Date,
-      default: null,
     },
   },
   {
@@ -103,33 +76,10 @@ const questionSchema = new Schema<IQuestion>(
   }
 );
 
-// Soft-delete filter: exclude deleted questions from all queries by default
-questionSchema.pre("find", function () {
-  if (!this.getFilter().deletedAt) this.where({ deletedAt: null });
-});
-questionSchema.pre("findOne", function () {
-  if (!this.getFilter().deletedAt) this.where({ deletedAt: null });
-});
-questionSchema.pre("countDocuments", function () {
-  if (!this.getFilter().deletedAt) this.where({ deletedAt: null });
-});
-questionSchema.pre("aggregate", function () {
-  const pipeline = this.pipeline();
-  if (pipeline.length > 0 && "$match" in pipeline[0]) {
-    const match = (pipeline[0] as { $match: Record<string, any> }).$match;
-    if (!match.deletedAt) match.deletedAt = null;
-  } else {
-    pipeline.unshift({ $match: { deletedAt: null } });
-  }
-});
-
-questionSchema.index({ dailyTask: 1 });
-questionSchema.index({ task: 1, userId: 1 });
+questionSchema.index({ userId: 1, category: 1 });
 questionSchema.index({ userId: 1, status: 1 });
 questionSchema.index({ userId: 1, solvedAt: 1 });
 questionSchema.index({ userId: 1, starred: 1 });
 questionSchema.index({ userId: 1, topic: 1 });
-questionSchema.index({ userId: 1, nextReviewAt: 1 });
-questionSchema.index({ deletedAt: 1 });
 
 export const Question = model("Question", questionSchema);

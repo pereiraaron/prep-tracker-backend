@@ -6,8 +6,6 @@ import {
   updateQuestionSchema,
   createBacklogQuestionSchema,
   bulkDeleteSchema,
-  moveToDailyTaskSchema,
-  bulkMoveSchema,
 } from "../validators/question";
 import {
   createQuestion,
@@ -18,33 +16,19 @@ import {
   solveQuestion,
   resetQuestion,
   toggleStarred,
-  reviewQuestion,
-  getDueForReview,
-  getRevisions,
   searchQuestions,
-  getAllTags,
-  getAllTopics,
-  getAllSources,
   bulkDeleteQuestions,
-  deduplicateQuestions,
   createBacklogQuestion,
   getBacklogQuestions,
-  moveToDailyTask,
-  bulkMoveToDailyTask,
 } from "../controllers/question";
 
 const router = Router();
 
 // Named endpoints (must be before /:id to avoid conflicts)
 router.get("/search", authenticate, searchQuestions);
-router.get("/tags", authenticate, getAllTags);
-router.get("/topics", authenticate, getAllTopics);
-router.get("/sources", authenticate, getAllSources);
 router.post("/bulk-delete", authenticate, validate(bulkDeleteSchema), bulkDeleteQuestions);
-router.post("/bulk-move", authenticate, validate(bulkMoveSchema), bulkMoveToDailyTask);
-router.post("/deduplicate", authenticate, deduplicateQuestions);
-router.get("/due-for-review", authenticate, getDueForReview);
-router.route("/backlog")
+router
+  .route("/backlog")
   .get(authenticate, getBacklogQuestions)
   .post(authenticate, validate(createBacklogQuestionSchema), createBacklogQuestion);
 
@@ -53,9 +37,6 @@ router.route("/").get(authenticate, getAllQuestions).post(authenticate, validate
 router.patch("/:id/solve", authenticate, solveQuestion);
 router.patch("/:id/reset", authenticate, resetQuestion);
 router.patch("/:id/star", authenticate, toggleStarred);
-router.patch("/:id/review", authenticate, reviewQuestion);
-router.patch("/:id/move", authenticate, validate(moveToDailyTaskSchema), moveToDailyTask);
-router.get("/:id/revisions", authenticate, getRevisions);
 
 router
   .route("/:id")

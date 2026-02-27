@@ -1,14 +1,9 @@
 import { Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
-import { AuthRequest, JwtPayload } from "../types";
+import { AuthRequest, JwtPayload } from "../types/auth";
 
-export const authenticate = (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
-  const authHeader =
-    req.headers.authorization || (req.headers.Authorization as string);
+export const authenticate = (req: AuthRequest, res: Response, next: NextFunction) => {
+  const authHeader = req.headers.authorization || (req.headers.Authorization as string);
 
   if (!authHeader?.startsWith("Bearer ")) {
     res.status(401).json({ message: "Missing or invalid token" });
@@ -21,7 +16,7 @@ export const authenticate = (
     const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as JwtPayload;
     req.user = decoded;
     next();
-  } catch (error) {
+  } catch (_err) {
     res.status(401).json({ message: "Token expired or invalid" });
   }
 };

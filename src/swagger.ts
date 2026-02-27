@@ -5,9 +5,7 @@ const swaggerSpec = {
     description: "Software engineer interview preparation tracker",
     version: "2.0.0",
   },
-  servers: [
-    { url: "/", description: "Current server" },
-  ],
+  servers: [{ url: "/", description: "Current server" }],
   components: {
     securitySchemes: {
       BearerAuth: {
@@ -27,17 +25,9 @@ const swaggerSpec = {
         type: "string" as const,
         enum: ["dsa", "system_design", "behavioral", "machine_coding", "language_framework"],
       },
-      TaskStatus: {
-        type: "string" as const,
-        enum: ["active", "completed"],
-      },
-      DailyTaskStatus: {
-        type: "string" as const,
-        enum: ["pending", "incomplete", "in_progress", "completed"],
-      },
       QuestionStatus: {
         type: "string" as const,
-        enum: ["pending", "in_progress", "solved"],
+        enum: ["pending", "solved"],
       },
       Difficulty: {
         type: "string" as const,
@@ -47,79 +37,16 @@ const swaggerSpec = {
         type: "string" as const,
         enum: ["leetcode", "greatfrontend", "other"],
       },
-      RecurrenceFrequency: {
-        type: "string" as const,
-        enum: ["daily", "weekly", "biweekly", "monthly", "custom"],
-      },
-      Task: {
-        type: "object" as const,
-        properties: {
-          id: { type: "string" as const },
-          name: { type: "string" as const },
-          userId: { type: "string" as const },
-          category: { $ref: "#/components/schemas/PrepCategory" },
-          targetQuestionCount: { type: "integer" as const, minimum: 1 },
-          isRecurring: { type: "boolean" as const },
-          recurrence: {
-            type: "object" as const,
-            properties: {
-              frequency: { $ref: "#/components/schemas/RecurrenceFrequency" },
-              daysOfWeek: { type: "array" as const, items: { type: "integer" as const }, description: "0=Sun, 1=Mon, ..., 6=Sat" },
-              interval: { type: "integer" as const, description: "For custom frequency - every N days" },
-              startDate: { type: "string" as const, format: "date-time" },
-            },
-          },
-          endDate: { type: "string" as const, format: "date-time" },
-          status: { $ref: "#/components/schemas/TaskStatus" },
-          createdAt: { type: "string" as const, format: "date-time" },
-          updatedAt: { type: "string" as const, format: "date-time" },
-        },
-      },
-      TaskInput: {
-        type: "object" as const,
-        required: ["name", "category", "targetQuestionCount"],
-        properties: {
-          name: { type: "string" as const },
-          category: { $ref: "#/components/schemas/PrepCategory" },
-          targetQuestionCount: { type: "integer" as const, minimum: 1 },
-          isRecurring: { type: "boolean" as const },
-          recurrence: {
-            type: "object" as const,
-            properties: {
-              frequency: { $ref: "#/components/schemas/RecurrenceFrequency" },
-              daysOfWeek: { type: "array" as const, items: { type: "integer" as const } },
-              interval: { type: "integer" as const },
-              startDate: { type: "string" as const, format: "date-time" },
-            },
-          },
-          endDate: { type: "string" as const, format: "date-time" },
-        },
-      },
-      DailyTask: {
-        type: "object" as const,
-        properties: {
-          id: { type: "string" as const },
-          task: { type: "string" as const },
-          userId: { type: "string" as const },
-          date: { type: "string" as const, format: "date-time" },
-          taskName: { type: "string" as const },
-          category: { type: "string" as const },
-          targetQuestionCount: { type: "integer" as const },
-          addedQuestionCount: { type: "integer" as const },
-          solvedQuestionCount: { type: "integer" as const },
-          status: { $ref: "#/components/schemas/DailyTaskStatus" },
-          questions: { type: "array" as const, items: { $ref: "#/components/schemas/Question" } },
-          createdAt: { type: "string" as const, format: "date-time" },
-          updatedAt: { type: "string" as const, format: "date-time" },
-        },
-      },
       Question: {
         type: "object" as const,
         properties: {
           id: { type: "string" as const },
-          dailyTask: { type: "string" as const, nullable: true, description: "null for backlog questions" },
-          task: { type: "string" as const, nullable: true, description: "null for backlog questions" },
           userId: { type: "string" as const },
+          category: {
+            $ref: "#/components/schemas/PrepCategory",
+            nullable: true,
+            description: "null for backlog questions",
+          },
           title: { type: "string" as const },
           notes: { type: "string" as const },
           solution: { type: "string" as const },
@@ -129,21 +56,8 @@ const swaggerSpec = {
           source: { $ref: "#/components/schemas/QuestionSource" },
           url: { type: "string" as const },
           tags: { type: "array" as const, items: { type: "string" as const } },
+          companyTags: { type: "array" as const, items: { type: "string" as const } },
           starred: { type: "boolean" as const, default: false },
-          revisions: {
-            type: "array" as const,
-            items: {
-              type: "object" as const,
-              properties: {
-                notes: { type: "string" as const },
-                solution: { type: "string" as const },
-                editedAt: { type: "string" as const, format: "date-time" },
-              },
-            },
-          },
-          reviewCount: { type: "integer" as const, default: 0 },
-          nextReviewAt: { type: "string" as const, format: "date-time", nullable: true },
-          lastReviewedAt: { type: "string" as const, format: "date-time", nullable: true },
           solvedAt: { type: "string" as const, format: "date-time" },
           createdAt: { type: "string" as const, format: "date-time" },
           updatedAt: { type: "string" as const, format: "date-time" },
@@ -151,9 +65,8 @@ const swaggerSpec = {
       },
       QuestionInput: {
         type: "object" as const,
-        required: ["dailyTaskId", "title"],
+        required: ["title", "solution", "category"],
         properties: {
-          dailyTaskId: { type: "string" as const, description: "ID of the daily task to add question to" },
           title: { type: "string" as const },
           notes: { type: "string" as const },
           solution: { type: "string" as const },
@@ -162,6 +75,8 @@ const swaggerSpec = {
           source: { $ref: "#/components/schemas/QuestionSource" },
           url: { type: "string" as const },
           tags: { type: "array" as const, items: { type: "string" as const } },
+          companyTags: { type: "array" as const, items: { type: "string" as const } },
+          category: { $ref: "#/components/schemas/PrepCategory" },
         },
       },
       BacklogQuestionInput: {
@@ -176,49 +91,7 @@ const swaggerSpec = {
           source: { $ref: "#/components/schemas/QuestionSource" },
           url: { type: "string" as const },
           tags: { type: "array" as const, items: { type: "string" as const } },
-        },
-      },
-      MoveInput: {
-        type: "object" as const,
-        required: ["dailyTaskId"],
-        properties: {
-          dailyTaskId: { type: "string" as const, description: "Target daily task ID" },
-        },
-      },
-      BulkMoveInput: {
-        type: "object" as const,
-        required: ["questionIds", "dailyTaskId"],
-        properties: {
-          questionIds: { type: "array" as const, items: { type: "string" as const }, description: "Array of backlog question IDs to move" },
-          dailyTaskId: { type: "string" as const, description: "Target daily task ID" },
-        },
-      },
-      Summary: {
-        type: "object" as const,
-        properties: {
-          total: { type: "integer" as const },
-          completed: { type: "integer" as const },
-          incomplete: { type: "integer" as const },
-          in_progress: { type: "integer" as const },
-          pending: { type: "integer" as const },
-        },
-      },
-      DaySchedule: {
-        type: "object" as const,
-        properties: {
-          date: { type: "string" as const, format: "date" },
-          summary: { $ref: "#/components/schemas/Summary" },
-          groups: {
-            type: "array" as const,
-            items: {
-              type: "object" as const,
-              properties: {
-                category: { type: "string" as const },
-                summary: { $ref: "#/components/schemas/Summary" },
-                dailyTasks: { type: "array" as const, items: { $ref: "#/components/schemas/DailyTask" } },
-              },
-            },
-          },
+          companyTags: { type: "array" as const, items: { type: "string" as const } },
         },
       },
       Pagination: {
@@ -242,119 +115,12 @@ const swaggerSpec = {
         responses: {
           "200": {
             description: "API is running",
-            content: { "application/json": { schema: { type: "object" as const, properties: { message: { type: "string" as const } } } } },
-          },
-        },
-      },
-    },
-
-    // ---- Tasks ----
-    "/api/tasks": {
-      get: {
-        tags: ["Tasks"],
-        summary: "List tasks with filters and pagination",
-        parameters: [
-          { name: "category", in: "query", schema: { $ref: "#/components/schemas/PrepCategory" } },
-          { name: "status", in: "query", schema: { $ref: "#/components/schemas/TaskStatus" } },
-          { name: "isRecurring", in: "query", schema: { type: "boolean" as const } },
-          { name: "page", in: "query", schema: { type: "integer" as const, default: 1 } },
-          { name: "limit", in: "query", schema: { type: "integer" as const, default: 50, maximum: 100 } },
-        ],
-        responses: {
-          "200": {
-            description: "Paginated list of tasks",
             content: {
               "application/json": {
-                schema: {
-                  type: "object" as const,
-                  properties: {
-                    tasks: { type: "array" as const, items: { $ref: "#/components/schemas/Task" } },
-                    pagination: { $ref: "#/components/schemas/Pagination" },
-                  },
-                },
+                schema: { type: "object" as const, properties: { message: { type: "string" as const } } },
               },
             },
           },
-        },
-      },
-      post: {
-        tags: ["Tasks"],
-        summary: "Create a new task",
-        requestBody: {
-          required: true,
-          content: { "application/json": { schema: { $ref: "#/components/schemas/TaskInput" } } },
-        },
-        responses: {
-          "201": { description: "Created task", content: { "application/json": { schema: { $ref: "#/components/schemas/Task" } } } },
-          "500": { description: "Server error" },
-        },
-      },
-    },
-    "/api/tasks/today": {
-      get: {
-        tags: ["Tasks"],
-        summary: "Get today's daily tasks (materializes recurring tasks)",
-        responses: {
-          "200": { description: "Today's schedule", content: { "application/json": { schema: { $ref: "#/components/schemas/DaySchedule" } } } },
-        },
-      },
-    },
-    "/api/tasks/history": {
-      get: {
-        tags: ["Tasks"],
-        summary: "Get daily task history for a date or date range",
-        parameters: [
-          { name: "date", in: "query", schema: { type: "string" as const, format: "date" }, description: "Single date lookup" },
-          { name: "from", in: "query", schema: { type: "string" as const, format: "date" }, description: "Range start" },
-          { name: "to", in: "query", schema: { type: "string" as const, format: "date" }, description: "Range end" },
-        ],
-        responses: {
-          "200": { description: "Schedule data", content: { "application/json": { schema: { $ref: "#/components/schemas/DaySchedule" } } } },
-          "400": { description: "Missing date parameters" },
-        },
-      },
-    },
-    "/api/tasks/daily/{id}": {
-      get: {
-        tags: ["Tasks"],
-        summary: "Get a daily task with its questions",
-        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
-        responses: {
-          "200": { description: "Daily task with questions", content: { "application/json": { schema: { $ref: "#/components/schemas/DailyTask" } } } },
-          "404": { description: "Not found" },
-        },
-      },
-    },
-    "/api/tasks/{id}": {
-      get: {
-        tags: ["Tasks"],
-        summary: "Get task by ID",
-        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
-        responses: {
-          "200": { description: "Task object", content: { "application/json": { schema: { $ref: "#/components/schemas/Task" } } } },
-          "404": { description: "Not found" },
-        },
-      },
-      put: {
-        tags: ["Tasks"],
-        summary: "Update a task (changes apply to future daily tasks only)",
-        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
-        requestBody: {
-          required: true,
-          content: { "application/json": { schema: { $ref: "#/components/schemas/TaskInput" } } },
-        },
-        responses: {
-          "200": { description: "Updated task", content: { "application/json": { schema: { $ref: "#/components/schemas/Task" } } } },
-          "404": { description: "Not found" },
-        },
-      },
-      delete: {
-        tags: ["Tasks"],
-        summary: "Delete a task and all its daily tasks and questions",
-        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
-        responses: {
-          "200": { description: "Deletion confirmation" },
-          "404": { description: "Not found" },
         },
       },
     },
@@ -365,15 +131,65 @@ const swaggerSpec = {
         tags: ["Questions"],
         summary: "List questions with filters and pagination",
         parameters: [
-          { name: "backlog", in: "query", schema: { type: "string" as const, enum: ["true", "all"] }, description: "true=backlog only, all=include backlog, omit=exclude backlog" },
-          { name: "task", in: "query", schema: { type: "string" as const }, description: "Filter by task ID" },
-          { name: "dailyTask", in: "query", schema: { type: "string" as const }, description: "Filter by daily task ID" },
+          {
+            name: "backlog",
+            in: "query",
+            schema: { type: "string" as const, enum: ["true", "all"] },
+            description: "true=backlog only, all=include backlog, omit=exclude backlog",
+          },
+          {
+            name: "category",
+            in: "query",
+            schema: { $ref: "#/components/schemas/PrepCategory" },
+            description: "Filter by category",
+          },
           { name: "status", in: "query", schema: { $ref: "#/components/schemas/QuestionStatus" } },
           { name: "difficulty", in: "query", schema: { $ref: "#/components/schemas/Difficulty" } },
           { name: "topic", in: "query", schema: { type: "string" as const } },
           { name: "source", in: "query", schema: { type: "string" as const } },
           { name: "tag", in: "query", schema: { type: "string" as const } },
-          { name: "starred", in: "query", schema: { type: "string" as const, enum: ["true"] }, description: "Filter starred questions only" },
+          {
+            name: "companyTag",
+            in: "query",
+            schema: { type: "string" as const },
+            description: "Filter by company tag",
+          },
+          {
+            name: "starred",
+            in: "query",
+            schema: { type: "string" as const, enum: ["true"] },
+            description: "Filter starred questions only",
+          },
+          {
+            name: "solvedAfter",
+            in: "query",
+            schema: { type: "string" as const, format: "date-time" },
+            description: "Filter solved after date",
+          },
+          {
+            name: "solvedBefore",
+            in: "query",
+            schema: { type: "string" as const, format: "date-time" },
+            description: "Filter solved before date",
+          },
+          {
+            name: "createdAfter",
+            in: "query",
+            schema: { type: "string" as const, format: "date-time" },
+            description: "Filter created after date",
+          },
+          {
+            name: "createdBefore",
+            in: "query",
+            schema: { type: "string" as const, format: "date-time" },
+            description: "Filter created before date",
+          },
+          {
+            name: "sort",
+            in: "query",
+            schema: { type: "string" as const },
+            description: "Sort field with optional - prefix for desc (e.g. -solvedAt, title, difficulty)",
+          },
           { name: "page", in: "query", schema: { type: "integer" as const, default: 1 } },
           { name: "limit", in: "query", schema: { type: "integer" as const, default: 50, maximum: 100 } },
         ],
@@ -396,28 +212,36 @@ const swaggerSpec = {
       },
       post: {
         tags: ["Questions"],
-        summary: "Add a question to a daily task",
+        summary: "Create a new question",
         requestBody: {
           required: true,
           content: { "application/json": { schema: { $ref: "#/components/schemas/QuestionInput" } } },
         },
         responses: {
-          "201": { description: "Created question", content: { "application/json": { schema: { $ref: "#/components/schemas/Question" } } } },
-          "404": { description: "Daily task not found" },
+          "201": {
+            description: "Created question",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Question" } } },
+          },
+          "500": { description: "Server error" },
         },
       },
     },
     "/api/questions/backlog": {
       get: {
         tags: ["Questions"],
-        summary: "List backlog questions (not assigned to any task)",
+        summary: "List backlog questions (no category assigned)",
         parameters: [
           { name: "status", in: "query", schema: { $ref: "#/components/schemas/QuestionStatus" } },
           { name: "difficulty", in: "query", schema: { $ref: "#/components/schemas/Difficulty" } },
           { name: "topic", in: "query", schema: { type: "string" as const } },
           { name: "source", in: "query", schema: { type: "string" as const } },
           { name: "tag", in: "query", schema: { type: "string" as const } },
-          { name: "starred", in: "query", schema: { type: "string" as const, enum: ["true"] }, description: "Filter starred questions only" },
+          {
+            name: "starred",
+            in: "query",
+            schema: { type: "string" as const, enum: ["true"] },
+            description: "Filter starred questions only",
+          },
           { name: "page", in: "query", schema: { type: "integer" as const, default: 1 } },
           { name: "limit", in: "query", schema: { type: "integer" as const, default: 50, maximum: 100 } },
         ],
@@ -446,36 +270,11 @@ const swaggerSpec = {
           content: { "application/json": { schema: { $ref: "#/components/schemas/BacklogQuestionInput" } } },
         },
         responses: {
-          "201": { description: "Created backlog question", content: { "application/json": { schema: { $ref: "#/components/schemas/Question" } } } },
-          "500": { description: "Server error" },
-        },
-      },
-    },
-    "/api/questions/bulk-move": {
-      post: {
-        tags: ["Questions"],
-        summary: "Move multiple backlog questions to a daily task",
-        requestBody: {
-          required: true,
-          content: { "application/json": { schema: { $ref: "#/components/schemas/BulkMoveInput" } } },
-        },
-        responses: {
-          "200": {
-            description: "Move result",
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object" as const,
-                  properties: {
-                    movedCount: { type: "integer" as const },
-                    skippedCount: { type: "integer" as const },
-                  },
-                },
-              },
-            },
+          "201": {
+            description: "Created backlog question",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Question" } } },
           },
-          "400": { description: "Invalid input" },
-          "404": { description: "Daily task not found" },
+          "500": { description: "Server error" },
         },
       },
     },
@@ -484,82 +283,26 @@ const swaggerSpec = {
         tags: ["Questions"],
         summary: "Search questions by text",
         parameters: [
-          { name: "q", in: "query", required: true, schema: { type: "string" as const }, description: "Search query (matches title, notes, solution, topic, source, tags)" },
+          {
+            name: "q",
+            in: "query",
+            required: true,
+            schema: { type: "string" as const },
+            description: "Search query (matches title, notes, solution, topic, source, tags)",
+          },
           { name: "status", in: "query", schema: { $ref: "#/components/schemas/QuestionStatus" } },
           { name: "difficulty", in: "query", schema: { $ref: "#/components/schemas/Difficulty" } },
         ],
         responses: {
-          "200": { description: "Matching questions", content: { "application/json": { schema: { type: "array" as const, items: { $ref: "#/components/schemas/Question" } } } } },
+          "200": {
+            description: "Matching questions",
+            content: {
+              "application/json": {
+                schema: { type: "array" as const, items: { $ref: "#/components/schemas/Question" } },
+              },
+            },
+          },
           "400": { description: "Missing search query" },
-        },
-      },
-    },
-    "/api/questions/tags": {
-      get: {
-        tags: ["Questions"],
-        summary: "List all tags with counts",
-        responses: {
-          "200": {
-            description: "Array of tags",
-            content: {
-              "application/json": {
-                schema: {
-                  type: "array" as const,
-                  items: {
-                    type: "object" as const,
-                    properties: { tag: { type: "string" as const }, count: { type: "integer" as const } },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-    "/api/questions/topics": {
-      get: {
-        tags: ["Questions"],
-        summary: "List all topics with counts",
-        parameters: [
-          { name: "category", in: "query", schema: { $ref: "#/components/schemas/PrepCategory" }, description: "Filter topics by category" },
-        ],
-        responses: {
-          "200": {
-            description: "Array of topics",
-            content: {
-              "application/json": {
-                schema: {
-                  type: "array" as const,
-                  items: {
-                    type: "object" as const,
-                    properties: { topic: { type: "string" as const }, count: { type: "integer" as const } },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-    "/api/questions/sources": {
-      get: {
-        tags: ["Questions"],
-        summary: "List all sources with counts",
-        responses: {
-          "200": {
-            description: "Array of sources",
-            content: {
-              "application/json": {
-                schema: {
-                  type: "array" as const,
-                  items: {
-                    type: "object" as const,
-                    properties: { source: { type: "string" as const }, count: { type: "integer" as const } },
-                  },
-                },
-              },
-            },
-          },
         },
       },
     },
@@ -575,7 +318,11 @@ const swaggerSpec = {
                 type: "object" as const,
                 required: ["ids"],
                 properties: {
-                  ids: { type: "array" as const, items: { type: "string" as const }, description: "Array of question IDs to delete" },
+                  ids: {
+                    type: "array" as const,
+                    items: { type: "string" as const },
+                    description: "Array of question IDs to delete",
+                  },
                 },
               },
             },
@@ -606,7 +353,10 @@ const swaggerSpec = {
         summary: "Get question by ID",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
         responses: {
-          "200": { description: "Question object", content: { "application/json": { schema: { $ref: "#/components/schemas/Question" } } } },
+          "200": {
+            description: "Question object",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Question" } } },
+          },
           "404": { description: "Not found" },
         },
       },
@@ -635,7 +385,10 @@ const swaggerSpec = {
           },
         },
         responses: {
-          "200": { description: "Updated question", content: { "application/json": { schema: { $ref: "#/components/schemas/Question" } } } },
+          "200": {
+            description: "Updated question",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Question" } } },
+          },
           "404": { description: "Not found" },
         },
       },
@@ -655,8 +408,11 @@ const swaggerSpec = {
         summary: "Mark a question as solved",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
         responses: {
-          "200": { description: "Solved question", content: { "application/json": { schema: { $ref: "#/components/schemas/Question" } } } },
-          "400": { description: "Already solved or is a backlog question" },
+          "200": {
+            description: "Solved question",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Question" } } },
+          },
+          "400": { description: "Already solved" },
           "404": { description: "Not found" },
         },
       },
@@ -667,7 +423,10 @@ const swaggerSpec = {
         summary: "Reset a solved question back to pending",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
         responses: {
-          "200": { description: "Reset question", content: { "application/json": { schema: { $ref: "#/components/schemas/Question" } } } },
+          "200": {
+            description: "Reset question",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Question" } } },
+          },
           "400": { description: "Question is not solved" },
           "404": { description: "Not found" },
         },
@@ -679,130 +438,14 @@ const swaggerSpec = {
         summary: "Toggle starred status on a question",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
         responses: {
-          "200": { description: "Updated question", content: { "application/json": { schema: { $ref: "#/components/schemas/Question" } } } },
-          "404": { description: "Not found" },
-        },
-      },
-    },
-    "/api/questions/{id}/review": {
-      patch: {
-        tags: ["Questions"],
-        summary: "Mark a solved question as reviewed (spaced repetition)",
-        description: "Increments reviewCount and schedules the next review at increasing intervals: 1, 3, 7, 14, 30, 60 days.",
-        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
-        responses: {
-          "200": { description: "Reviewed question with updated nextReviewAt", content: { "application/json": { schema: { $ref: "#/components/schemas/Question" } } } },
-          "400": { description: "Question is not solved" },
-          "404": { description: "Not found" },
-        },
-      },
-    },
-    "/api/questions/due-for-review": {
-      get: {
-        tags: ["Questions"],
-        summary: "List solved questions due for spaced repetition review",
-        parameters: [
-          { name: "topic", in: "query", schema: { type: "string" as const }, description: "Filter by topic" },
-          { name: "difficulty", in: "query", schema: { $ref: "#/components/schemas/Difficulty" } },
-        ],
-        responses: {
           "200": {
-            description: "Questions due for review",
-            content: { "application/json": { schema: { type: "array" as const, items: { $ref: "#/components/schemas/Question" } } } },
-          },
-        },
-      },
-    },
-    "/api/questions/{id}/revisions": {
-      get: {
-        tags: ["Questions"],
-        summary: "Get revision history for a question's notes and solution",
-        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
-        responses: {
-          "200": {
-            description: "Current content and revision history",
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object" as const,
-                  properties: {
-                    current: {
-                      type: "object" as const,
-                      properties: {
-                        notes: { type: "string" as const },
-                        solution: { type: "string" as const },
-                      },
-                    },
-                    revisions: {
-                      type: "array" as const,
-                      items: {
-                        type: "object" as const,
-                        properties: {
-                          notes: { type: "string" as const },
-                          solution: { type: "string" as const },
-                          editedAt: { type: "string" as const, format: "date-time" },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
+            description: "Updated question",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Question" } } },
           },
           "404": { description: "Not found" },
         },
       },
     },
-    "/api/questions/deduplicate": {
-      post: {
-        tags: ["Questions"],
-        summary: "Find and delete duplicate questions by title",
-        responses: {
-          "200": {
-            description: "Deduplication result",
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object" as const,
-                  properties: {
-                    message: { type: "string" as const },
-                    deleted: { type: "integer" as const },
-                    groups: {
-                      type: "array" as const,
-                      items: {
-                        type: "object" as const,
-                        properties: {
-                          title: { type: "string" as const },
-                          kept: { type: "string" as const, description: "ID of the kept question" },
-                          deleted: { type: "array" as const, items: { type: "string" as const }, description: "IDs of deleted duplicates" },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-    "/api/questions/{id}/move": {
-      patch: {
-        tags: ["Questions"],
-        summary: "Move a backlog question to a daily task",
-        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
-        requestBody: {
-          required: true,
-          content: { "application/json": { schema: { $ref: "#/components/schemas/MoveInput" } } },
-        },
-        responses: {
-          "200": { description: "Moved question", content: { "application/json": { schema: { $ref: "#/components/schemas/Question" } } } },
-          "400": { description: "Question is already assigned to a daily task" },
-          "404": { description: "Question or daily task not found" },
-        },
-      },
-    },
-
     // ---- Stats ----
     "/api/stats/overview": {
       get: {
@@ -846,7 +489,7 @@ const swaggerSpec = {
                       category: { type: "string" as const },
                       total: { type: "integer" as const },
                       solved: { type: "integer" as const },
-                      in_progress: { type: "integer" as const },
+
                       pending: { type: "integer" as const },
                       completionRate: { type: "integer" as const, description: "Percentage (0-100)" },
                     },
@@ -875,7 +518,7 @@ const swaggerSpec = {
                       difficulty: { type: "string" as const },
                       total: { type: "integer" as const },
                       solved: { type: "integer" as const },
-                      in_progress: { type: "integer" as const },
+
                       pending: { type: "integer" as const },
                       completionRate: { type: "integer" as const, description: "Percentage (0-100)" },
                     },
@@ -892,7 +535,12 @@ const swaggerSpec = {
         tags: ["Stats"],
         summary: "Get per-topic breakdown with completion rates",
         parameters: [
-          { name: "category", in: "query", schema: { $ref: "#/components/schemas/PrepCategory" }, description: "Filter by category" },
+          {
+            name: "category",
+            in: "query",
+            schema: { $ref: "#/components/schemas/PrepCategory" },
+            description: "Filter by category",
+          },
         ],
         responses: {
           "200": {
@@ -907,7 +555,7 @@ const swaggerSpec = {
                       topic: { type: "string" as const },
                       total: { type: "integer" as const },
                       solved: { type: "integer" as const },
-                      in_progress: { type: "integer" as const },
+
                       pending: { type: "integer" as const },
                       completionRate: { type: "integer" as const, description: "Percentage (0-100)" },
                     },
@@ -919,35 +567,17 @@ const swaggerSpec = {
         },
       },
     },
-    "/api/stats/streaks": {
-      get: {
-        tags: ["Stats"],
-        summary: "Get current and longest completion streaks",
-        responses: {
-          "200": {
-            description: "Streak stats",
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object" as const,
-                  properties: {
-                    currentStreak: { type: "integer" as const },
-                    longestStreak: { type: "integer" as const },
-                    totalActiveDays: { type: "integer" as const },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
     "/api/stats/progress": {
       get: {
         tags: ["Stats"],
-        summary: "Get daily solved question counts over a period",
+        summary: "Get daily solved question counts over a period (line/bar chart)",
         parameters: [
-          { name: "days", in: "query", schema: { type: "integer" as const, default: 30 }, description: "Number of past days to include" },
+          {
+            name: "days",
+            in: "query",
+            schema: { type: "integer" as const, default: 30 },
+            description: "Number of past days to include",
+          },
         ],
         responses: {
           "200": {
@@ -970,10 +600,216 @@ const swaggerSpec = {
         },
       },
     },
+    "/api/stats/sources": {
+      get: {
+        tags: ["Stats"],
+        summary: "Get per-source breakdown with completion rates (pie/bar chart)",
+        responses: {
+          "200": {
+            description: "Source breakdown",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "array" as const,
+                  items: {
+                    type: "object" as const,
+                    properties: {
+                      source: { type: "string" as const },
+                      total: { type: "integer" as const },
+                      solved: { type: "integer" as const },
+                      pending: { type: "integer" as const },
+                      completionRate: { type: "integer" as const },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/stats/company-tags": {
+      get: {
+        tags: ["Stats"],
+        summary: "Get per-company breakdown with completion rates (bar chart)",
+        responses: {
+          "200": {
+            description: "Company tag breakdown sorted by total desc",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "array" as const,
+                  items: {
+                    type: "object" as const,
+                    properties: {
+                      companyTag: { type: "string" as const },
+                      total: { type: "integer" as const },
+                      solved: { type: "integer" as const },
+                      pending: { type: "integer" as const },
+                      completionRate: { type: "integer" as const },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/stats/tags": {
+      get: {
+        tags: ["Stats"],
+        summary: "Get per-tag breakdown with completion rates (bar chart)",
+        responses: {
+          "200": {
+            description: "Tag breakdown sorted by total desc",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "array" as const,
+                  items: {
+                    type: "object" as const,
+                    properties: {
+                      tag: { type: "string" as const },
+                      total: { type: "integer" as const },
+                      solved: { type: "integer" as const },
+                      pending: { type: "integer" as const },
+                      completionRate: { type: "integer" as const },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/stats/heatmap": {
+      get: {
+        tags: ["Stats"],
+        summary: "Get GitHub-style contribution heatmap for a year (calendar heatmap)",
+        parameters: [
+          {
+            name: "year",
+            in: "query",
+            schema: { type: "integer" as const },
+            description: "Year to get heatmap for (default: current year)",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Object mapping each date to solved count",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object" as const,
+                  additionalProperties: { type: "integer" as const },
+                  description: "Keys are YYYY-MM-DD date strings, values are solved counts",
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/stats/weekly-progress": {
+      get: {
+        tags: ["Stats"],
+        summary: "Get weekly aggregated solved counts (bar chart)",
+        parameters: [
+          {
+            name: "weeks",
+            in: "query",
+            schema: { type: "integer" as const, default: 12 },
+            description: "Number of past weeks to include",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Weekly solve data",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "array" as const,
+                  items: {
+                    type: "object" as const,
+                    properties: {
+                      week: { type: "string" as const, description: "ISO week (e.g. 2026-W08)" },
+                      startDate: { type: "string" as const, format: "date" },
+                      solved: { type: "integer" as const },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/stats/cumulative-progress": {
+      get: {
+        tags: ["Stats"],
+        summary: "Get running total of solved questions over time (area/line chart)",
+        parameters: [
+          {
+            name: "days",
+            in: "query",
+            schema: { type: "integer" as const, default: 90 },
+            description: "Number of past days to include",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Cumulative solve data showing growth trajectory",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "array" as const,
+                  items: {
+                    type: "object" as const,
+                    properties: {
+                      date: { type: "string" as const, format: "date" },
+                      total: { type: "integer" as const, description: "Running total of solved questions" },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/stats/difficulty-by-category": {
+      get: {
+        tags: ["Stats"],
+        summary: "Get difficulty x category cross-tabulation (stacked bar / radar chart)",
+        responses: {
+          "200": {
+            description: "Per-category difficulty distribution",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "array" as const,
+                  items: {
+                    type: "object" as const,
+                    properties: {
+                      category: { type: "string" as const },
+                      easy: { type: "integer" as const },
+                      medium: { type: "integer" as const },
+                      hard: { type: "integer" as const },
+                      total: { type: "integer" as const },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
   },
   tags: [
     { name: "Health", description: "Health check" },
-    { name: "Tasks", description: "Task CRUD, scheduling, and daily tasks" },
     { name: "Questions", description: "Question CRUD, search, solve, tags, topics, sources" },
     { name: "Stats", description: "Analytics and progress tracking" },
   ],
