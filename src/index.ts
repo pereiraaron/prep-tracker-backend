@@ -1,25 +1,58 @@
 import express, { Express } from "express";
 import cors from "cors";
+import helmet from "helmet";
+import compression from "compression";
+import rateLimit from "express-rate-limit";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
 import { connectToDB } from "./db/connect";
 import { requestLogger } from "./middleware/requestLogger";
 import { errorHandler } from "./middleware/errorHandler";
+import { logger } from "./utils/logger";
 import swaggerSpec from "./swagger";
 import questionRoutes from "./routes/question";
 import statsRoutes from "./routes/stats";
 
 dotenv.config();
 
-if (!process.env.JWT_SECRET) {
-  throw new Error("JWT_SECRET environment variable is required");
+// Validate required environment variables
+const requiredEnvVars = ["JWT_SECRET", "CONNECTION_STRING"] as const;
+for (const envVar of requiredEnvVars) {
+  if (!process.env[envVar]) {
+    throw new Error(`${envVar} environment variable is required`);
+  }
 }
 
 const app: Express = express();
 const PORT = process.env.PORT || 7002;
+const isProd = process.env.NODE_ENV === "production";
 
-app.use(cors());
+// Security
+app.use(helmet());
+app.use(
+  cors({
+    origin: process.env.CORS_ORIGIN || "*",
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+
+// Rate limiting
+app.use(
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: isProd ? 100 : 1000,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, error: { message: "Too many requests, please try again later" } },
+  })
+);
+
+// Body parsing & compression
+app.use(compression());
 app.use(express.json({ limit: "1mb" }));
+
+// Logging
 app.use(requestLogger);
 
 // Swagger docs
@@ -42,7 +75,7 @@ app.get("/api-docs", (_, res) => {
 app.use("/api/questions", questionRoutes);
 app.use("/api/stats", statsRoutes);
 
-// Health check route
+// Health check
 app.get("/", async (_, res) => {
   const dbOk = mongoose.connection.readyState === 1;
   const status = dbOk ? 200 : 503;
@@ -63,7 +96,7 @@ connectToDB();
 
 if (!process.env.VERCEL) {
   app.listen(PORT, () => {
-    console.log(`Prep Tracker is running on port ${PORT}`);
+    logger.info(`Prep Tracker is running on port ${PORT}`);
   });
 }
 
