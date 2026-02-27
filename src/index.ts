@@ -67,6 +67,16 @@ app.get("/api-docs", (_, res) => {
 </body></html>`);
 });
 
+// Ensure DB is connected before handling requests (critical for serverless)
+app.use(async (_req, _res, next) => {
+  try {
+    await connectToDB();
+    next();
+  } catch {
+    next(new Error("Database connection failed"));
+  }
+});
+
 // Routes
 app.use("/api/questions", questionRoutes);
 app.use("/api/stats", statsRoutes);
@@ -88,11 +98,11 @@ app.get("/", async (_, res) => {
 // Centralized error handler (must be after routes)
 app.use(errorHandler);
 
-connectToDB();
-
 if (!process.env.VERCEL) {
-  app.listen(PORT, () => {
-    logger.info(`Prep Tracker is running on port ${PORT}`);
+  connectToDB().then(() => {
+    app.listen(PORT, () => {
+      logger.info(`Prep Tracker is running on port ${PORT}`);
+    });
   });
 }
 
