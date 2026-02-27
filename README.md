@@ -1,40 +1,24 @@
 # Prep Tracker Backend
 
-REST API for tracking software engineering interview preparation. Built with Express, TypeScript, and MongoDB.
+REST API for tracking software engineering interview preparation. Built with Express 5, TypeScript, MongoDB, and Zod.
 
-## Architecture
-
-Three core models:
-
-- **Task** - Named, optionally recurring containers (e.g. "DSA Daily Practice")
-- **TaskInstance** - Per-day snapshots of a task, created lazily on dashboard load
-- **Question** - Individual questions added and solved within an instance, or saved to a backlog for later
-
-Recurring tasks use lazy materialization -- instances are created on demand when `GET /api/tasks/today` is called, not via CRON. This makes it compatible with serverless deployments (Vercel).
-
-Questions can also exist in a **backlog** (not tied to any task). Backlog questions can be moved into an active task instance when the user is ready to solve them. Moving from backlog to task is one-way -- questions cannot be moved back to backlog.
-
-## Tech Stack
-
-- Node.js + Express 5
-- TypeScript
-- MongoDB + Mongoose
-- JWT authentication
-- Deployed on Vercel
-
-## Setup
+## Quick Start
 
 ```bash
+cp .env.example .env    # Fill in your values
 npm install
+npm run dev             # http://localhost:7002
 ```
 
-Create a `.env` file:
+## Environment Variables
 
-```
-CONNECTION_STRING=mongodb+srv://...
-JWT_SECRET=your-secret-key
-PORT=7002
-```
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `CONNECTION_STRING` | Yes | MongoDB connection URI |
+| `JWT_SECRET` | Yes | Secret for JWT verification |
+| `PORT` | No | Server port (default: 7002) |
+| `NODE_ENV` | No | `development` or `production` |
+| `CORS_ORIGIN` | No | Allowed origin (default: `*`) |
 
 ## Scripts
 
@@ -42,119 +26,81 @@ PORT=7002
 |---------|-------------|
 | `npm run dev` | Start dev server with hot reload |
 | `npm run build` | Compile TypeScript to `dist/` |
-| `npm start` | Run compiled output |
+| `npm start` | Run compiled production build |
 | `npm test` | Run tests |
+| `npm run lint` | Lint with ESLint |
+| `npm run format` | Format with Prettier |
 | `npm run setup-db` | Create collections and indexes |
-| `npm run migrate` | Migrate from old Entry/TaskCompletion schema |
 
 ## API Endpoints
 
-All endpoints except health require a `Bearer` JWT token.
+API docs available at `/api-docs` when server is running.
 
-### Public
+### Questions (`/api/questions`)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/` | Health check |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/` | Create a solved question (requires `title`, `solution`, `category`) |
+| GET | `/` | List questions with filters, sorting, pagination |
+| GET | `/:id` | Get question by ID |
+| PUT | `/:id` | Update question |
+| DELETE | `/:id` | Delete question |
+| PATCH | `/:id/solve` | Mark backlog question as solved |
+| PATCH | `/:id/reset` | Reset solved question to pending |
+| PATCH | `/:id/star` | Toggle starred |
+| GET | `/search` | Full-text search (`?q=`) |
+| POST | `/bulk-delete` | Delete multiple questions |
+| GET | `/backlog` | List backlog questions (no category) |
+| POST | `/backlog` | Create backlog question |
 
-### Tasks
+**Query filters:** `category`, `status`, `difficulty`, `topic`, `source`, `tag`, `companyTag`, `starred`, `backlog`, `solvedAfter`, `solvedBefore`, `createdAfter`, `createdBefore`, `sort`, `page`, `limit`
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/tasks` | Create a task |
-| GET | `/api/tasks` | List tasks (filters: category, status, isRecurring) |
-| GET | `/api/tasks/today` | Get today's instances (materializes recurring tasks) |
-| GET | `/api/tasks/history` | Get past instances (query: date, from, to) |
-| GET | `/api/tasks/:id` | Get a task |
-| PUT | `/api/tasks/:id` | Update a task (future instances only) |
-| DELETE | `/api/tasks/:id` | Delete task + all instances + questions |
-| GET | `/api/tasks/instances/:id` | Get an instance with its questions |
+### Stats (`/api/stats`)
 
-### Questions
+| Endpoint | Chart Type | Description |
+|----------|------------|-------------|
+| GET `/overview` | Dashboard cards | Totals by status, category, difficulty |
+| GET `/categories` | Bar chart | Per-category completion rates |
+| GET `/difficulties` | Bar chart | Per-difficulty completion rates |
+| GET `/topics` | Bar chart | Per-topic breakdown (`?category`) |
+| GET `/sources` | Pie chart | Per-source breakdown |
+| GET `/company-tags` | Bar chart | Per-company breakdown |
+| GET `/tags` | Bar chart | Per-tag breakdown |
+| GET `/progress` | Line chart | Daily solved counts (`?days=30`) |
+| GET `/weekly-progress` | Bar chart | Weekly solved counts (`?weeks=12`) |
+| GET `/cumulative-progress` | Area chart | Running total over time (`?days=90`) |
+| GET `/heatmap` | Calendar heatmap | GitHub-style yearly grid (`?year=2026`) |
+| GET `/difficulty-by-category` | Stacked bar | Difficulty x category cross-tab |
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/questions` | Add a question to an instance |
-| GET | `/api/questions` | List questions (filters: backlog, task, instance, status, difficulty, topic, source, tag) |
-| POST | `/api/questions/backlog` | Create a backlog question (not tied to any task) |
-| GET | `/api/questions/backlog` | List backlog questions |
-| GET | `/api/questions/search` | Search by text (query: q, status, difficulty) |
-| GET | `/api/questions/tags` | All tags with counts |
-| GET | `/api/questions/topics` | All topics with counts |
-| GET | `/api/questions/sources` | All sources with counts |
-| GET | `/api/questions/:id` | Get a question |
-| PUT | `/api/questions/:id` | Update a question |
-| PATCH | `/api/questions/:id/solve` | Mark as solved |
-| PATCH | `/api/questions/:id/move` | Move a backlog question to a task instance |
-| DELETE | `/api/questions/:id` | Delete a question |
-| POST | `/api/questions/bulk-delete` | Bulk delete questions |
-| POST | `/api/questions/bulk-move` | Bulk move backlog questions to a task instance |
+## Data Model
 
-### Stats
+Single entity: **Question**
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/stats/overview` | Totals by status, category, difficulty |
-| GET | `/api/stats/categories` | Per-category breakdown with completion rates |
-| GET | `/api/stats/difficulties` | Per-difficulty breakdown with completion rates |
-| GET | `/api/stats/streaks` | Current and longest completion streaks |
-| GET | `/api/stats/progress` | Daily solved counts (query: days, default 30) |
+| Field | Type | Description |
+|-------|------|-------------|
+| `category` | enum / null | dsa, system_design, behavioral, machine_coding, language_framework, theory, quiz. `null` = backlog |
+| `title` | string | Question title |
+| `notes` | string | Personal notes |
+| `solution` | string | Solution code/text |
+| `status` | enum | `pending` or `solved` |
+| `difficulty` | enum | easy, medium, hard |
+| `topic` | string | e.g. "Arrays", "Graph", "System Design" |
+| `source` | enum | leetcode, greatfrontend, geeksforgeeks, linkedin, medium, other |
+| `url` | string | Problem URL |
+| `tags` | string[] | Custom tags (max 20) |
+| `companyTags` | string[] | Company names (max 20) |
+| `starred` | boolean | Bookmarked |
+| `solvedAt` | Date | When marked solved |
 
-## Data Models
+## Tech Stack
 
-### Task
-
-```
-name                 String, required
-category             "dsa" | "system_design" | "behavioral" | "machine_coding" | "language_framework"
-targetQuestionCount  Number, min 1
-isRecurring          Boolean
-recurrence           { frequency, daysOfWeek[], interval, startDate }
-endDate              Date, optional
-status               "active" | "completed"
-```
-
-Recurrence frequencies: `daily`, `weekly`, `biweekly`, `monthly`, `custom`
-
-### TaskInstance
-
-```
-task                  ref Task
-date                  Date (normalized to midnight)
-taskName              String (snapshot)
-category              String (snapshot)
-targetQuestionCount   Number (snapshot)
-addedQuestionCount    Number (denormalized counter)
-solvedQuestionCount   Number (denormalized counter)
-status                "pending" | "incomplete" | "in_progress" | "completed"
-```
-
-Status transitions:
-- **pending** -- no questions added yet
-- **incomplete** -- added < target
-- **in_progress** -- has questions, not all solved
-- **completed** -- all questions solved AND added >= target
-
-### Question
-
-```
-taskInstance   ref TaskInstance (null for backlog questions)
-task           ref Task (null for backlog questions)
-title          String, required
-notes          String
-solution       String
-status         "pending" | "in_progress" | "solved"
-difficulty     "easy" | "medium" | "hard"
-topic          String
-source         "leetcode" | "greatfrontend" | "other"
-url            String
-tags           [String]
-solvedAt       Date
-```
-
-## Swagger Docs
-
-Interactive API docs available at `/api-docs` when the server is running.
+- **Runtime:** Node.js + Express 5
+- **Language:** TypeScript 5
+- **Database:** MongoDB (Mongoose 8)
+- **Validation:** Zod 4
+- **Auth:** JWT
+- **Security:** Helmet, CORS, rate limiting, compression
+- **Deployment:** Vercel-ready
 
 ## License
 
