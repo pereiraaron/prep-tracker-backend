@@ -1,6 +1,5 @@
 import express, { Express } from "express";
 import cors from "cors";
-import helmet from "helmet";
 import compression from "compression";
 import rateLimit from "express-rate-limit";
 import dotenv from "dotenv";
@@ -28,7 +27,6 @@ const PORT = process.env.PORT || 7002;
 const isProd = process.env.NODE_ENV === "production";
 
 // Security
-app.use(helmet());
 app.use(
   cors({
     origin: process.env.CORS_ORIGIN || "*",
