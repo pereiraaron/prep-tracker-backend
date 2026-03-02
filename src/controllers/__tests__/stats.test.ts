@@ -23,6 +23,14 @@ jest.mock("../../models/Question", () => ({
   },
 }));
 
+jest.mock("../../utils/cache", () => ({
+  cache: {
+    get: jest.fn().mockReturnValue(null),
+    set: jest.fn(),
+    invalidate: jest.fn(),
+  },
+}));
+
 const mockRes = () => {
   const res: any = {};
   res.status = jest.fn().mockReturnValue(res);
@@ -44,21 +52,24 @@ beforeEach(() => jest.clearAllMocks());
 // ---- getOverview ----
 describe("getOverview", () => {
   it("returns overview with counts by status, category, and difficulty", async () => {
-    (Question.aggregate as jest.Mock)
-      .mockResolvedValueOnce([
-        { _id: QuestionStatus.Pending, count: 5 },
-        { _id: QuestionStatus.Solved, count: 3 },
-      ])
-      .mockResolvedValueOnce([
-        { _id: PrepCategory.DSA, count: 4 },
-        { _id: PrepCategory.SystemDesign, count: 2 },
-      ])
-      .mockResolvedValueOnce([
-        { _id: Difficulty.Easy, count: 2 },
-        { _id: Difficulty.Hard, count: 1 },
-      ]);
-
-    (Question.countDocuments as jest.Mock).mockResolvedValueOnce(8).mockResolvedValueOnce(2);
+    (Question.aggregate as jest.Mock).mockResolvedValueOnce([
+      {
+        byStatus: [
+          { _id: QuestionStatus.Pending, count: 5 },
+          { _id: QuestionStatus.Solved, count: 3 },
+        ],
+        byCategory: [
+          { _id: PrepCategory.DSA, count: 4 },
+          { _id: PrepCategory.SystemDesign, count: 2 },
+        ],
+        byDifficulty: [
+          { _id: Difficulty.Easy, count: 2 },
+          { _id: Difficulty.Hard, count: 1 },
+        ],
+        total: [{ count: 8 }],
+        backlog: [{ count: 2 }],
+      },
+    ]);
 
     const res = mockRes();
     await getOverview(mockReq(), res);
@@ -241,8 +252,12 @@ describe("getWeeklyProgress", () => {
 // ---- getCumulativeProgress ----
 describe("getCumulativeProgress", () => {
   it("returns cumulative totals with prior count", async () => {
-    (Question.countDocuments as jest.Mock).mockResolvedValue(10); // prior count
-    (Question.aggregate as jest.Mock).mockResolvedValue([]);
+    (Question.aggregate as jest.Mock).mockResolvedValueOnce([
+      {
+        priorCount: [{ count: 10 }],
+        daily: [],
+      },
+    ]);
 
     const res = mockRes();
     await getCumulativeProgress(mockReq({ query: { days: "7" } }), res);
@@ -260,8 +275,12 @@ describe("getCumulativeProgress", () => {
     d1.setDate(d1.getDate() - 2);
     const d1Str = d1.toISOString().split("T")[0];
 
-    (Question.countDocuments as jest.Mock).mockResolvedValue(5);
-    (Question.aggregate as jest.Mock).mockResolvedValue([{ _id: d1Str, count: 3 }]);
+    (Question.aggregate as jest.Mock).mockResolvedValueOnce([
+      {
+        priorCount: [{ count: 5 }],
+        daily: [{ _id: d1Str, count: 3 }],
+      },
+    ]);
 
     const res = mockRes();
     await getCumulativeProgress(mockReq({ query: { days: "7" } }), res);
@@ -341,9 +360,7 @@ describe("getInsights", () => {
       .mockResolvedValueOnce([]) // topics
       .mockResolvedValueOnce([]) // difficulties
       .mockResolvedValueOnce([]); // daily
-    (Question.countDocuments as jest.Mock)
-      .mockResolvedValueOnce(0)
-      .mockResolvedValueOnce(2);
+    (Question.countDocuments as jest.Mock).mockResolvedValueOnce(0).mockResolvedValueOnce(2);
 
     const res = mockRes();
     await getInsights(mockReq({ query: { refresh: "true" } }), res);

@@ -81,5 +81,12 @@ questionSchema.index({ userId: 1, status: 1 });
 questionSchema.index({ userId: 1, solvedAt: 1 });
 questionSchema.index({ userId: 1, starred: 1 });
 questionSchema.index({ userId: 1, topic: 1 });
+questionSchema.index({ userId: 1, difficulty: 1 });
+questionSchema.index({ userId: 1, source: 1 });
+questionSchema.index({ userId: 1, status: 1, solvedAt: 1 });
+questionSchema.index(
+  { title: "text", topic: "text", tags: "text", companyTags: "text" },
+  { name: "question_text_search" }
+);
 
 export const Question = model("Question", questionSchema);

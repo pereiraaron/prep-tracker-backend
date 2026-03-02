@@ -812,7 +812,12 @@ const swaggerSpec = {
         tags: ["Stats"],
         summary: "Get personalized insights: weak areas, tips, and milestones (cached 5min)",
         parameters: [
-          { name: "refresh", in: "query", schema: { type: "string" as const, enum: ["true"] }, description: "Force recomputation, bypass cache" },
+          {
+            name: "refresh",
+            in: "query",
+            schema: { type: "string" as const, enum: ["true"] },
+            description: "Force recomputation, bypass cache",
+          },
         ],
         responses: {
           "200": {

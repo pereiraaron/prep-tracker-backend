@@ -15,22 +15,37 @@ import { cache } from "../utils/cache";
 export const getOverview = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
+    const cacheKey = `stats:${userId}:overview`;
 
-    const baseFilter = { userId };
+    if (req.query.refresh !== "true") {
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        sendSuccess(res, cached);
+        return;
+      }
+    }
 
-    const [byStatus, byCategory, byDifficulty, total, backlogCount] = await Promise.all([
-      Question.aggregate([{ $match: baseFilter }, { $group: { _id: "$status", count: { $sum: 1 } } }]),
-      Question.aggregate([
-        { $match: { ...baseFilter, category: { $ne: null } } },
-        { $group: { _id: "$category", count: { $sum: 1 } } },
-      ]),
-      Question.aggregate([
-        { $match: { ...baseFilter, difficulty: { $ne: null } } },
-        { $group: { _id: "$difficulty", count: { $sum: 1 } } },
-      ]),
-      Question.countDocuments(baseFilter),
-      Question.countDocuments({ userId, category: null }),
+    const [facetResult] = await Question.aggregate([
+      { $match: { userId } },
+      {
+        $facet: {
+          byStatus: [{ $group: { _id: "$status", count: { $sum: 1 } } }],
+          byCategory: [{ $match: { category: { $ne: null } } }, { $group: { _id: "$category", count: { $sum: 1 } } }],
+          byDifficulty: [
+            { $match: { difficulty: { $ne: null } } },
+            { $group: { _id: "$difficulty", count: { $sum: 1 } } },
+          ],
+          total: [{ $count: "count" }],
+          backlog: [{ $match: { category: null } }, { $count: "count" }],
+        },
+      },
     ]);
+
+    const byStatus = facetResult.byStatus;
+    const byCategory = facetResult.byCategory;
+    const byDifficulty = facetResult.byDifficulty;
+    const total = facetResult.total[0]?.count ?? 0;
+    const backlogCount = facetResult.backlog[0]?.count ?? 0;
 
     const statusMap: Record<string, number> = {};
     for (const s of Object.values(QuestionStatus)) statusMap[s] = 0;
@@ -44,13 +59,15 @@ export const getOverview = async (req: AuthRequest, res: Response) => {
     for (const d of Object.values(Difficulty)) difficultyMap[d] = 0;
     for (const row of byDifficulty) difficultyMap[row._id] = row.count;
 
-    sendSuccess(res, {
+    const data = {
       total,
       backlogCount,
       byStatus: statusMap,
       byCategory: categoryMap,
       byDifficulty: difficultyMap,
-    });
+    };
+    cache.set(cacheKey, data);
+    sendSuccess(res, data);
   } catch (error) {
     logger.error((error as Error).message);
     sendError(res, "Error fetching overview stats");
@@ -64,6 +81,15 @@ export const getOverview = async (req: AuthRequest, res: Response) => {
 export const getCategoryBreakdown = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
+    const cacheKey = `stats:${userId}:categories`;
+
+    if (req.query.refresh !== "true") {
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        sendSuccess(res, cached);
+        return;
+      }
+    }
 
     const pipeline = await Question.aggregate([
       { $match: { userId, category: { $ne: null } } },
@@ -96,6 +122,7 @@ export const getCategoryBreakdown = async (req: AuthRequest, res: Response) => {
       completionRate: stats.total > 0 ? Math.round((stats.solved / stats.total) * 100) : 0,
     }));
 
+    cache.set(cacheKey, breakdown);
     sendSuccess(res, breakdown);
   } catch (error) {
     logger.error((error as Error).message);
@@ -110,6 +137,15 @@ export const getCategoryBreakdown = async (req: AuthRequest, res: Response) => {
 export const getDifficultyBreakdown = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
+    const cacheKey = `stats:${userId}:difficulties`;
+
+    if (req.query.refresh !== "true") {
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        sendSuccess(res, cached);
+        return;
+      }
+    }
 
     const pipeline = await Question.aggregate([
       { $match: { userId, difficulty: { $ne: null } } },
@@ -142,6 +178,7 @@ export const getDifficultyBreakdown = async (req: AuthRequest, res: Response) =>
       completionRate: stats.total > 0 ? Math.round((stats.solved / stats.total) * 100) : 0,
     }));
 
+    cache.set(cacheKey, breakdown);
     sendSuccess(res, breakdown);
   } catch (error) {
     logger.error((error as Error).message);
@@ -581,32 +618,27 @@ export const getCumulativeProgress = async (req: AuthRequest, res: Response) => 
     now.setDate(now.getDate() - days);
     const startDate = toISTMidnight(now);
 
-    // Count questions solved before the window
-    const priorCount = await Question.countDocuments({
-      userId,
-      status: QuestionStatus.Solved,
-      solvedAt: { $lt: startDate },
-    });
-
-    // Daily solved within the window
-    const daily = await Question.aggregate([
+    const [facetResult] = await Question.aggregate([
+      { $match: { userId, status: QuestionStatus.Solved, solvedAt: { $ne: null } } },
       {
-        $match: {
-          userId,
-          status: QuestionStatus.Solved,
-          solvedAt: { $gte: startDate },
+        $facet: {
+          priorCount: [{ $match: { solvedAt: { $lt: startDate } } }, { $count: "count" }],
+          daily: [
+            { $match: { solvedAt: { $gte: startDate } } },
+            {
+              $group: {
+                _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt" } },
+                count: { $sum: 1 },
+              },
+            },
+            { $sort: { _id: 1 } },
+          ],
         },
       },
-      {
-        $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt" } },
-          count: { $sum: 1 },
-        },
-      },
-      { $sort: { _id: 1 } },
     ]);
 
-    const dailyMap = new Map(daily.map((d) => [d._id, d.count]));
+    const priorCount = facetResult.priorCount[0]?.count ?? 0;
+    const dailyMap = new Map(facetResult.daily.map((d: any) => [d._id, d.count]));
     const result: Array<{ date: string; total: number }> = [];
 
     let runningTotal = priorCount;
@@ -738,21 +770,42 @@ function buildWeakAreas(
     const rate = Math.round((e.solved / e.total) * 100);
     const lastDays = daysAgo(e.lastSolved);
     if (rate < 50 || (lastDays !== null && lastDays > 14 && e.pending > 0)) {
-      items.push({ type: "category", name, total: e.total, solved: e.solved, completionRate: rate, lastSolvedDaysAgo: lastDays });
+      items.push({
+        type: "category",
+        name,
+        total: e.total,
+        solved: e.solved,
+        completionRate: rate,
+        lastSolvedDaysAgo: lastDays,
+      });
     }
   }
   for (const [name, e] of topicMap) {
     if (e.total < 3) continue;
     const rate = Math.round((e.solved / e.total) * 100);
     if (rate < 50) {
-      items.push({ type: "topic", name, total: e.total, solved: e.solved, completionRate: rate, lastSolvedDaysAgo: daysAgo(e.lastSolved) });
+      items.push({
+        type: "topic",
+        name,
+        total: e.total,
+        solved: e.solved,
+        completionRate: rate,
+        lastSolvedDaysAgo: daysAgo(e.lastSolved),
+      });
     }
   }
   for (const [name, e] of difficultyMap) {
     if (e.total === 0) continue;
     const rate = Math.round((e.solved / e.total) * 100);
     if (rate < 30) {
-      items.push({ type: "difficulty", name, total: e.total, solved: e.solved, completionRate: rate, lastSolvedDaysAgo: daysAgo(e.lastSolved) });
+      items.push({
+        type: "difficulty",
+        name,
+        total: e.total,
+        solved: e.solved,
+        completionRate: rate,
+        lastSolvedDaysAgo: daysAgo(e.lastSolved),
+      });
     }
   }
 
@@ -798,26 +851,29 @@ function buildTips(
     const rate = Math.round((e.solved / e.total) * 100);
     if (rate < 50 && (!weakest || rate < weakest.rate)) weakest = { name, rate };
   }
-  if (weakest) tips.push({ text: `Your weakest category is ${weakest.name} at ${weakest.rate}% completion`, priority: "medium" });
+  if (weakest)
+    tips.push({ text: `Your weakest category is ${weakest.name} at ${weakest.rate}% completion`, priority: "medium" });
 
   // "Backlog"
-  if (backlogCount > 10) tips.push({ text: `You have ${backlogCount} questions in backlog — consider solving some`, priority: "low" });
+  if (backlogCount > 10)
+    tips.push({ text: `You have ${backlogCount} questions in backlog — consider solving some`, priority: "low" });
 
   // "Great momentum"
-  const todayStr = toISTDateString(now);
   let weekSolved = 0;
   const checkDate = new Date(now);
   for (let i = 0; i < 7; i++) {
     weekSolved += dailySolvesMap.get(toISTDateString(checkDate)) || 0;
     checkDate.setDate(checkDate.getDate() - 1);
   }
-  if (weekSolved >= 5) tips.push({ text: `Great momentum! You've solved ${weekSolved} questions this week`, priority: "low" });
+  if (weekSolved >= 5)
+    tips.push({ text: `Great momentum! You've solved ${weekSolved} questions this week`, priority: "low" });
 
   // "Close to mastering"
   for (const [name, e] of categoryMap) {
     if (e.total === 0 || e.pending === 0) continue;
     const rate = Math.round((e.solved / e.total) * 100);
-    if (rate > 80) tips.push({ text: `You're close to mastering ${name} — only ${e.pending} more to go`, priority: "low" });
+    if (rate > 80)
+      tips.push({ text: `You're close to mastering ${name} — only ${e.pending} more to go`, priority: "low" });
   }
 
   return tips.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]).slice(0, 5);
@@ -844,7 +900,11 @@ function buildMilestones(
   const catsWithSolves = [...categoryMap.entries()].filter(([_, v]) => v.solved > 0).length;
   const catsWithQuestions = [...categoryMap.entries()].filter(([_, v]) => v.total > 0).length;
   m("Category Explorer", catsWithSolves >= 3, `${Math.min(catsWithSolves, 3)}/3`);
-  m("Well Rounded", catsWithQuestions > 0 && catsWithSolves >= catsWithQuestions, `${catsWithSolves}/${catsWithQuestions}`);
+  m(
+    "Well Rounded",
+    catsWithQuestions > 0 && catsWithSolves >= catsWithQuestions,
+    `${catsWithSolves}/${catsWithQuestions}`
+  );
 
   // Streak detection — walk backward from today
   let currentStreak = 0;
@@ -874,7 +934,7 @@ function buildMilestones(
 export const getInsights = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const cacheKey = `insights:${userId}`;
+    const cacheKey = `stats:${userId}:insights`;
 
     if (req.query.refresh !== "true") {
       const cached = cache.get(cacheKey);
