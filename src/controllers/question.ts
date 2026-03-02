@@ -4,6 +4,7 @@ import { AuthRequest } from "../types/auth";
 import { QuestionStatus } from "../types/question";
 import { sendSuccess, sendPaginated, sendError } from "../utils/response";
 import { logger } from "../utils/logger";
+import { cache } from "../utils/cache";
 
 // ---- CRUD ----
 
@@ -28,6 +29,7 @@ export const createQuestion = async (req: AuthRequest, res: Response) => {
       solvedAt: new Date(),
     });
 
+    cache.invalidate(`stats:${userId}`);
     sendSuccess(res, question, 201);
   } catch (error) {
     logger.error((error as Error).message);
@@ -91,7 +93,7 @@ export const getAllQuestions = async (req: AuthRequest, res: Response) => {
     const skip = (page - 1) * limit;
 
     const [questions, total] = await Promise.all([
-      Question.find(filter).sort(sort).skip(skip).limit(limit),
+      Question.find(filter).sort(sort).skip(skip).limit(limit).lean(),
       Question.countDocuments(filter),
     ]);
 
@@ -105,7 +107,7 @@ export const getAllQuestions = async (req: AuthRequest, res: Response) => {
 export const getQuestionById = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const question = await Question.findOne({ _id: req.params.id, userId });
+    const question = await Question.findOne({ _id: req.params.id, userId }).lean();
 
     if (!question) {
       sendError(res, "Question not found", 404);
@@ -143,6 +145,7 @@ export const updateQuestion = async (req: AuthRequest, res: Response) => {
 
     await question.save();
 
+    cache.invalidate(`stats:${userId}`);
     sendSuccess(res, question);
   } catch (error) {
     logger.error((error as Error).message);
@@ -160,6 +163,7 @@ export const deleteQuestion = async (req: AuthRequest, res: Response) => {
       return;
     }
 
+    cache.invalidate(`stats:${userId}`);
     sendSuccess(res, { message: "Question deleted" });
   } catch (error) {
     logger.error((error as Error).message);
@@ -172,22 +176,23 @@ export const deleteQuestion = async (req: AuthRequest, res: Response) => {
 export const solveQuestion = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const question = await Question.findOne({ _id: req.params.id, userId });
+    const question = await Question.findOneAndUpdate(
+      { _id: req.params.id, userId, status: { $ne: QuestionStatus.Solved } },
+      { $set: { status: QuestionStatus.Solved, solvedAt: new Date() } },
+      { new: true }
+    ).lean();
 
     if (!question) {
-      sendError(res, "Question not found", 404);
+      const exists = await Question.exists({ _id: req.params.id, userId });
+      if (exists) {
+        sendError(res, "Question is already solved", 400);
+      } else {
+        sendError(res, "Question not found", 404);
+      }
       return;
     }
 
-    if (question.status === QuestionStatus.Solved) {
-      sendError(res, "Question is already solved", 400);
-      return;
-    }
-
-    question.status = QuestionStatus.Solved;
-    question.solvedAt = new Date();
-    await question.save();
-
+    cache.invalidate(`stats:${userId}`);
     sendSuccess(res, question);
   } catch (error) {
     logger.error((error as Error).message);
@@ -200,22 +205,23 @@ export const solveQuestion = async (req: AuthRequest, res: Response) => {
 export const resetQuestion = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const question = await Question.findOne({ _id: req.params.id, userId });
+    const question = await Question.findOneAndUpdate(
+      { _id: req.params.id, userId, status: QuestionStatus.Solved },
+      { $set: { status: QuestionStatus.Pending }, $unset: { solvedAt: 1 } },
+      { new: true }
+    ).lean();
 
     if (!question) {
-      sendError(res, "Question not found", 404);
+      const exists = await Question.exists({ _id: req.params.id, userId });
+      if (exists) {
+        sendError(res, "Question is not solved", 400);
+      } else {
+        sendError(res, "Question not found", 404);
+      }
       return;
     }
 
-    if (question.status !== QuestionStatus.Solved) {
-      sendError(res, "Question is not solved", 400);
-      return;
-    }
-
-    question.status = QuestionStatus.Pending;
-    question.solvedAt = undefined;
-    await question.save();
-
+    cache.invalidate(`stats:${userId}`);
     sendSuccess(res, question);
   } catch (error) {
     logger.error((error as Error).message);
@@ -228,15 +234,16 @@ export const resetQuestion = async (req: AuthRequest, res: Response) => {
 export const toggleStarred = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const question = await Question.findOne({ _id: req.params.id, userId });
+    const question = await Question.findOneAndUpdate(
+      { _id: req.params.id, userId },
+      [{ $set: { starred: { $not: "$starred" } } }],
+      { new: true }
+    ).lean();
 
     if (!question) {
       sendError(res, "Question not found", 404);
       return;
     }
-
-    question.starred = !question.starred;
-    await question.save();
 
     sendSuccess(res, question);
   } catch (error) {
@@ -262,20 +269,11 @@ export const searchQuestions = async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    const escaped = q.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const regex = new RegExp(escaped, "i");
+    const trimmed = q.trim();
 
     const filter: Record<string, any> = {
       userId,
-      $or: [
-        { title: regex },
-        { notes: regex },
-        { solution: regex },
-        { topic: regex },
-        { source: regex },
-        { tags: regex },
-        { companyTags: regex },
-      ],
+      $text: { $search: trimmed },
     };
 
     // Additional filters
@@ -287,7 +285,11 @@ export const searchQuestions = async (req: AuthRequest, res: Response) => {
     const skip = (page - 1) * limit;
 
     const [questions, total] = await Promise.all([
-      Question.find(filter).sort({ updatedAt: -1 }).skip(skip).limit(limit),
+      Question.find(filter, { score: { $meta: "textScore" } })
+        .sort({ score: { $meta: "textScore" } })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
       Question.countDocuments(filter),
     ]);
 
@@ -312,6 +314,7 @@ export const bulkDeleteQuestions = async (req: AuthRequest, res: Response) => {
 
     const result = await Question.deleteMany({ _id: { $in: ids }, userId });
 
+    cache.invalidate(`stats:${userId}`);
     sendSuccess(res, {
       message: `Deleted ${result.deletedCount} questions`,
       deletedCount: result.deletedCount,
@@ -343,6 +346,7 @@ export const createBacklogQuestion = async (req: AuthRequest, res: Response) => 
       companyTags,
     });
 
+    cache.invalidate(`stats:${userId}`);
     sendSuccess(res, question, 201);
   } catch (error) {
     logger.error((error as Error).message);
@@ -376,7 +380,7 @@ export const getBacklogQuestions = async (req: AuthRequest, res: Response) => {
     const skip = (page - 1) * limit;
 
     const [questions, total] = await Promise.all([
-      Question.find(filter).sort(sort).skip(skip).limit(limit),
+      Question.find(filter).sort(sort).skip(skip).limit(limit).lean(),
       Question.countDocuments(filter),
     ]);
 

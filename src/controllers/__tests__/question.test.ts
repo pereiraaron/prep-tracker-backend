@@ -20,9 +20,19 @@ jest.mock("../../models/Question", () => ({
     create: jest.fn(),
     findOne: jest.fn(),
     findOneAndDelete: jest.fn(),
+    findOneAndUpdate: jest.fn(),
+    exists: jest.fn(),
     find: jest.fn(),
     deleteMany: jest.fn(),
     countDocuments: jest.fn(),
+  },
+}));
+
+jest.mock("../../utils/cache", () => ({
+  cache: {
+    get: jest.fn().mockReturnValue(null),
+    set: jest.fn(),
+    invalidate: jest.fn(),
   },
 }));
 
@@ -55,6 +65,34 @@ const mockQuestionDoc = (overrides: Record<string, any> = {}) => ({
   solvedAt: undefined as Date | undefined,
   save: jest.fn().mockResolvedValue(undefined),
   ...overrides,
+});
+
+const mockFindChain = (result: any) => ({
+  sort: jest.fn().mockReturnValue({
+    skip: jest.fn().mockReturnValue({
+      limit: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(result),
+      }),
+    }),
+  }),
+});
+
+const mockFindWithProjectionChain = (result: any) => ({
+  sort: jest.fn().mockReturnValue({
+    skip: jest.fn().mockReturnValue({
+      limit: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(result),
+      }),
+    }),
+  }),
+});
+
+const mockFindOneAndUpdateChain = (result: any) => ({
+  lean: jest.fn().mockResolvedValue(result),
+});
+
+const mockFindOneChain = (result: any) => ({
+  lean: jest.fn().mockResolvedValue(result),
 });
 
 beforeEach(() => jest.clearAllMocks());
@@ -99,13 +137,7 @@ describe("createQuestion", () => {
 describe("getAllQuestions", () => {
   it("returns paginated questions", async () => {
     const questions = [mockQuestionDoc()];
-    (Question.find as jest.Mock).mockReturnValue({
-      sort: jest.fn().mockReturnValue({
-        skip: jest.fn().mockReturnValue({
-          limit: jest.fn().mockResolvedValue(questions),
-        }),
-      }),
-    });
+    (Question.find as jest.Mock).mockReturnValue(mockFindChain(questions));
     (Question.countDocuments as jest.Mock).mockResolvedValue(1);
 
     const req = mockReq();
@@ -120,11 +152,7 @@ describe("getAllQuestions", () => {
   });
 
   it("applies backlog filter", async () => {
-    (Question.find as jest.Mock).mockReturnValue({
-      sort: jest.fn().mockReturnValue({
-        skip: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
-      }),
-    });
+    (Question.find as jest.Mock).mockReturnValue(mockFindChain([]));
     (Question.countDocuments as jest.Mock).mockResolvedValue(0);
 
     const req = mockReq({ query: { backlog: "true", starred: "true" } });
@@ -138,11 +166,7 @@ describe("getAllQuestions", () => {
   });
 
   it("excludes backlog by default", async () => {
-    (Question.find as jest.Mock).mockReturnValue({
-      sort: jest.fn().mockReturnValue({
-        skip: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
-      }),
-    });
+    (Question.find as jest.Mock).mockReturnValue(mockFindChain([]));
     (Question.countDocuments as jest.Mock).mockResolvedValue(0);
 
     const req = mockReq();
@@ -159,7 +183,7 @@ describe("getAllQuestions", () => {
 describe("getQuestionById", () => {
   it("returns the question", async () => {
     const question = mockQuestionDoc();
-    (Question.findOne as jest.Mock).mockResolvedValue(question);
+    (Question.findOne as jest.Mock).mockReturnValue(mockFindOneChain(question));
 
     const req = mockReq({ params: { id: "q1" } });
     const res = mockRes();
@@ -170,7 +194,7 @@ describe("getQuestionById", () => {
   });
 
   it("returns 404 when not found", async () => {
-    (Question.findOne as jest.Mock).mockResolvedValue(null);
+    (Question.findOne as jest.Mock).mockReturnValue(mockFindOneChain(null));
 
     const req = mockReq({ params: { id: "invalid" } });
     const res = mockRes();
@@ -238,21 +262,25 @@ describe("deleteQuestion", () => {
 // ---- solveQuestion ----
 describe("solveQuestion", () => {
   it("solves question", async () => {
-    const question = mockQuestionDoc({ status: QuestionStatus.Pending });
-    (Question.findOne as jest.Mock).mockResolvedValue(question);
+    const question = mockQuestionDoc({ status: QuestionStatus.Solved, solvedAt: new Date() });
+    (Question.findOneAndUpdate as jest.Mock).mockReturnValue(mockFindOneAndUpdateChain(question));
 
     const req = mockReq({ params: { id: "q1" } });
     const res = mockRes();
 
     await solveQuestion(req, res);
 
-    expect(question.status).toBe(QuestionStatus.Solved);
-    expect(question.solvedAt).toBeDefined();
-    expect(question.save).toHaveBeenCalled();
+    expect(Question.findOneAndUpdate).toHaveBeenCalledWith(
+      { _id: "q1", userId: "user1", status: { $ne: QuestionStatus.Solved } },
+      { $set: { status: QuestionStatus.Solved, solvedAt: expect.any(Date) } },
+      { new: true }
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
   });
 
   it("returns 400 when already solved", async () => {
-    (Question.findOne as jest.Mock).mockResolvedValue(mockQuestionDoc({ status: QuestionStatus.Solved }));
+    (Question.findOneAndUpdate as jest.Mock).mockReturnValue(mockFindOneAndUpdateChain(null));
+    (Question.exists as jest.Mock).mockResolvedValue({ _id: "q1" });
 
     const req = mockReq({ params: { id: "q1" } });
     const res = mockRes();
@@ -263,29 +291,38 @@ describe("solveQuestion", () => {
   });
 
   it("returns 404 when not found", async () => {
-    (Question.findOne as jest.Mock).mockResolvedValue(null);
+    (Question.findOneAndUpdate as jest.Mock).mockReturnValue(mockFindOneAndUpdateChain(null));
+    (Question.exists as jest.Mock).mockResolvedValue(null);
 
-    await solveQuestion(mockReq({ params: { id: "x" } }), mockRes());
+    const res = mockRes();
+    await solveQuestion(mockReq({ params: { id: "x" } }), res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
   });
 });
 
 // ---- resetQuestion ----
 describe("resetQuestion", () => {
   it("resets solved question", async () => {
-    const question = mockQuestionDoc({ status: QuestionStatus.Solved, solvedAt: new Date() });
-    (Question.findOne as jest.Mock).mockResolvedValue(question);
+    const question = mockQuestionDoc({ status: QuestionStatus.Pending, solvedAt: undefined });
+    (Question.findOneAndUpdate as jest.Mock).mockReturnValue(mockFindOneAndUpdateChain(question));
 
     const req = mockReq({ params: { id: "q1" } });
     const res = mockRes();
 
     await resetQuestion(req, res);
 
-    expect(question.status).toBe(QuestionStatus.Pending);
-    expect(question.solvedAt).toBeUndefined();
+    expect(Question.findOneAndUpdate).toHaveBeenCalledWith(
+      { _id: "q1", userId: "user1", status: QuestionStatus.Solved },
+      { $set: { status: QuestionStatus.Pending }, $unset: { solvedAt: 1 } },
+      { new: true }
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
   });
 
   it("returns 400 when not solved", async () => {
-    (Question.findOne as jest.Mock).mockResolvedValue(mockQuestionDoc({ status: QuestionStatus.Pending }));
+    (Question.findOneAndUpdate as jest.Mock).mockReturnValue(mockFindOneAndUpdateChain(null));
+    (Question.exists as jest.Mock).mockResolvedValue({ _id: "q1" });
 
     const res = mockRes();
     await resetQuestion(mockReq({ params: { id: "q1" } }), res);
@@ -297,17 +334,22 @@ describe("resetQuestion", () => {
 // ---- toggleStarred ----
 describe("toggleStarred", () => {
   it("toggles starred", async () => {
-    const question = mockQuestionDoc({ starred: false });
-    (Question.findOne as jest.Mock).mockResolvedValue(question);
+    const question = mockQuestionDoc({ starred: true });
+    (Question.findOneAndUpdate as jest.Mock).mockReturnValue(mockFindOneAndUpdateChain(question));
 
-    await toggleStarred(mockReq({ params: { id: "q1" } }), mockRes());
+    const res = mockRes();
+    await toggleStarred(mockReq({ params: { id: "q1" } }), res);
 
-    expect(question.starred).toBe(true);
-    expect(question.save).toHaveBeenCalled();
+    expect(Question.findOneAndUpdate).toHaveBeenCalledWith(
+      { _id: "q1", userId: "user1" },
+      [{ $set: { starred: { $not: "$starred" } } }],
+      { new: true }
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
   });
 
   it("returns 404 when not found", async () => {
-    (Question.findOne as jest.Mock).mockResolvedValue(null);
+    (Question.findOneAndUpdate as jest.Mock).mockReturnValue(mockFindOneAndUpdateChain(null));
     const res = mockRes();
 
     await toggleStarred(mockReq({ params: { id: "x" } }), res);
@@ -319,17 +361,15 @@ describe("toggleStarred", () => {
 // ---- searchQuestions ----
 describe("searchQuestions", () => {
   it("searches questions", async () => {
-    (Question.find as jest.Mock).mockReturnValue({
-      sort: jest.fn().mockReturnValue({
-        skip: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
-      }),
-    });
+    (Question.find as jest.Mock).mockReturnValue(mockFindWithProjectionChain([]));
     (Question.countDocuments as jest.Mock).mockResolvedValue(0);
 
     const res = mockRes();
     await searchQuestions(mockReq({ query: { q: "Two Sum" } }), res);
 
     expect(res.status).toHaveBeenCalledWith(200);
+    const findFilter = (Question.find as jest.Mock).mock.calls[0][0];
+    expect(findFilter.$text).toEqual({ $search: "Two Sum" });
   });
 
   it("returns 400 when query is missing", async () => {
@@ -376,11 +416,7 @@ describe("createBacklogQuestion", () => {
 // ---- getBacklogQuestions ----
 describe("getBacklogQuestions", () => {
   it("filters by category null", async () => {
-    (Question.find as jest.Mock).mockReturnValue({
-      sort: jest.fn().mockReturnValue({
-        skip: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
-      }),
-    });
+    (Question.find as jest.Mock).mockReturnValue(mockFindChain([]));
     (Question.countDocuments as jest.Mock).mockResolvedValue(0);
 
     const res = mockRes();

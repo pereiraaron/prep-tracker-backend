@@ -6,6 +6,7 @@ import { QuestionStatus, Difficulty, QuestionSource } from "../types/question";
 import { toISTDateString, toISTMidnight } from "../utils/date";
 import { sendSuccess, sendError } from "../utils/response";
 import { logger } from "../utils/logger";
+import { cache } from "../utils/cache";
 
 /**
  * GET /api/stats/overview
@@ -14,22 +15,37 @@ import { logger } from "../utils/logger";
 export const getOverview = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
+    const cacheKey = `stats:${userId}:overview`;
 
-    const baseFilter = { userId };
+    if (req.query.refresh !== "true") {
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        sendSuccess(res, cached);
+        return;
+      }
+    }
 
-    const [byStatus, byCategory, byDifficulty, total, backlogCount] = await Promise.all([
-      Question.aggregate([{ $match: baseFilter }, { $group: { _id: "$status", count: { $sum: 1 } } }]),
-      Question.aggregate([
-        { $match: { ...baseFilter, category: { $ne: null } } },
-        { $group: { _id: "$category", count: { $sum: 1 } } },
-      ]),
-      Question.aggregate([
-        { $match: { ...baseFilter, difficulty: { $ne: null } } },
-        { $group: { _id: "$difficulty", count: { $sum: 1 } } },
-      ]),
-      Question.countDocuments(baseFilter),
-      Question.countDocuments({ userId, category: null }),
+    const [facetResult] = await Question.aggregate([
+      { $match: { userId } },
+      {
+        $facet: {
+          byStatus: [{ $group: { _id: "$status", count: { $sum: 1 } } }],
+          byCategory: [{ $match: { category: { $ne: null } } }, { $group: { _id: "$category", count: { $sum: 1 } } }],
+          byDifficulty: [
+            { $match: { difficulty: { $ne: null } } },
+            { $group: { _id: "$difficulty", count: { $sum: 1 } } },
+          ],
+          total: [{ $count: "count" }],
+          backlog: [{ $match: { category: null } }, { $count: "count" }],
+        },
+      },
     ]);
+
+    const byStatus = facetResult.byStatus;
+    const byCategory = facetResult.byCategory;
+    const byDifficulty = facetResult.byDifficulty;
+    const total = facetResult.total[0]?.count ?? 0;
+    const backlogCount = facetResult.backlog[0]?.count ?? 0;
 
     const statusMap: Record<string, number> = {};
     for (const s of Object.values(QuestionStatus)) statusMap[s] = 0;
@@ -43,13 +59,15 @@ export const getOverview = async (req: AuthRequest, res: Response) => {
     for (const d of Object.values(Difficulty)) difficultyMap[d] = 0;
     for (const row of byDifficulty) difficultyMap[row._id] = row.count;
 
-    sendSuccess(res, {
+    const data = {
       total,
       backlogCount,
       byStatus: statusMap,
       byCategory: categoryMap,
       byDifficulty: difficultyMap,
-    });
+    };
+    cache.set(cacheKey, data);
+    sendSuccess(res, data);
   } catch (error) {
     logger.error((error as Error).message);
     sendError(res, "Error fetching overview stats");
@@ -63,6 +81,15 @@ export const getOverview = async (req: AuthRequest, res: Response) => {
 export const getCategoryBreakdown = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
+    const cacheKey = `stats:${userId}:categories`;
+
+    if (req.query.refresh !== "true") {
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        sendSuccess(res, cached);
+        return;
+      }
+    }
 
     const pipeline = await Question.aggregate([
       { $match: { userId, category: { $ne: null } } },
@@ -95,6 +122,7 @@ export const getCategoryBreakdown = async (req: AuthRequest, res: Response) => {
       completionRate: stats.total > 0 ? Math.round((stats.solved / stats.total) * 100) : 0,
     }));
 
+    cache.set(cacheKey, breakdown);
     sendSuccess(res, breakdown);
   } catch (error) {
     logger.error((error as Error).message);
@@ -109,6 +137,15 @@ export const getCategoryBreakdown = async (req: AuthRequest, res: Response) => {
 export const getDifficultyBreakdown = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
+    const cacheKey = `stats:${userId}:difficulties`;
+
+    if (req.query.refresh !== "true") {
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        sendSuccess(res, cached);
+        return;
+      }
+    }
 
     const pipeline = await Question.aggregate([
       { $match: { userId, difficulty: { $ne: null } } },
@@ -141,6 +178,7 @@ export const getDifficultyBreakdown = async (req: AuthRequest, res: Response) =>
       completionRate: stats.total > 0 ? Math.round((stats.solved / stats.total) * 100) : 0,
     }));
 
+    cache.set(cacheKey, breakdown);
     sendSuccess(res, breakdown);
   } catch (error) {
     logger.error((error as Error).message);
@@ -252,6 +290,69 @@ export const getProgress = async (req: AuthRequest, res: Response) => {
   } catch (error) {
     logger.error((error as Error).message);
     sendError(res, "Error fetching progress stats");
+  }
+};
+
+/**
+ * GET /api/stats/streaks
+ * Returns current streak, longest streak, and total active days.
+ */
+export const getStreaks = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+
+    const solved = await Question.aggregate([
+      { $match: { userId, status: QuestionStatus.Solved, solvedAt: { $ne: null } } },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt" } },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+
+    if (solved.length === 0) {
+      sendSuccess(res, { currentStreak: 0, longestStreak: 0, totalActiveDays: 0 });
+      return;
+    }
+
+    const dates = solved.map((s) => s._id as string);
+    const totalActiveDays = dates.length;
+
+    // Compute longest streak
+    let longestStreak = 1;
+    let currentRun = 1;
+    for (let i = 1; i < dates.length; i++) {
+      const prev = new Date(dates[i - 1]);
+      const curr = new Date(dates[i]);
+      const diffDays = (curr.getTime() - prev.getTime()) / 86400000;
+      if (diffDays === 1) {
+        currentRun++;
+      } else {
+        currentRun = 1;
+      }
+      if (currentRun > longestStreak) longestStreak = currentRun;
+    }
+
+    // Compute current streak (walk backward from today)
+    const today = toISTMidnight(new Date());
+    let currentStreak = 0;
+    const dateSet = new Set(dates);
+    const latestDate = new Date(`${dates[dates.length - 1]}T00:00:00.000+05:30`);
+    const daysSinceLatest = Math.round((today.getTime() - latestDate.getTime()) / 86400000);
+
+    if (daysSinceLatest <= 1) {
+      const checkDate = new Date(latestDate);
+      while (dateSet.has(toISTDateString(checkDate))) {
+        currentStreak++;
+        checkDate.setDate(checkDate.getDate() - 1);
+      }
+    }
+
+    sendSuccess(res, { currentStreak, longestStreak, totalActiveDays });
+  } catch (error) {
+    logger.error((error as Error).message);
+    sendError(res, "Error fetching streak stats");
   }
 };
 
@@ -517,32 +618,27 @@ export const getCumulativeProgress = async (req: AuthRequest, res: Response) => 
     now.setDate(now.getDate() - days);
     const startDate = toISTMidnight(now);
 
-    // Count questions solved before the window
-    const priorCount = await Question.countDocuments({
-      userId,
-      status: QuestionStatus.Solved,
-      solvedAt: { $lt: startDate },
-    });
-
-    // Daily solved within the window
-    const daily = await Question.aggregate([
+    const [facetResult] = await Question.aggregate([
+      { $match: { userId, status: QuestionStatus.Solved, solvedAt: { $ne: null } } },
       {
-        $match: {
-          userId,
-          status: QuestionStatus.Solved,
-          solvedAt: { $gte: startDate },
+        $facet: {
+          priorCount: [{ $match: { solvedAt: { $lt: startDate } } }, { $count: "count" }],
+          daily: [
+            { $match: { solvedAt: { $gte: startDate } } },
+            {
+              $group: {
+                _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt" } },
+                count: { $sum: 1 },
+              },
+            },
+            { $sort: { _id: 1 } },
+          ],
         },
       },
-      {
-        $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt" } },
-          count: { $sum: 1 },
-        },
-      },
-      { $sort: { _id: 1 } },
     ]);
 
-    const dailyMap = new Map(daily.map((d) => [d._id, d.count]));
+    const priorCount = facetResult.priorCount[0]?.count ?? 0;
+    const dailyMap = new Map(facetResult.daily.map((d: any) => [d._id, d.count]));
     const result: Array<{ date: string; total: number }> = [];
 
     let runningTotal = priorCount;
@@ -606,5 +702,291 @@ export const getDifficultyByCategory = async (req: AuthRequest, res: Response) =
   } catch (error) {
     logger.error((error as Error).message);
     sendError(res, "Error fetching difficulty by category");
+  }
+};
+
+// ---- Insights ----
+
+interface DimensionEntry {
+  total: number;
+  solved: number;
+  pending: number;
+  lastSolved: Date | null;
+}
+
+interface WeakAreaItem {
+  type: "category" | "topic" | "difficulty";
+  name: string;
+  total: number;
+  solved: number;
+  completionRate: number;
+  lastSolvedDaysAgo: number | null;
+}
+
+interface Tip {
+  text: string;
+  priority: "high" | "medium" | "low";
+}
+
+interface Milestone {
+  name: string;
+  achieved: boolean;
+  progress: string;
+}
+
+function reduceByDimension(rows: any[], dimKey: string, initKeys?: string[]): Map<string, DimensionEntry> {
+  const map = new Map<string, DimensionEntry>();
+  if (initKeys) {
+    for (const key of initKeys) map.set(key, { total: 0, solved: 0, pending: 0, lastSolved: null });
+  }
+  for (const row of rows) {
+    const name = row._id[dimKey] as string;
+    if (!map.has(name)) map.set(name, { total: 0, solved: 0, pending: 0, lastSolved: null });
+    const entry = map.get(name)!;
+    entry.total += row.count;
+    if (row._id.status === QuestionStatus.Solved) {
+      entry.solved += row.count;
+      if (row.lastSolved && (!entry.lastSolved || row.lastSolved > entry.lastSolved)) {
+        entry.lastSolved = row.lastSolved;
+      }
+    } else {
+      entry.pending += row.count;
+    }
+  }
+  return map;
+}
+
+function buildWeakAreas(
+  categoryMap: Map<string, DimensionEntry>,
+  topicMap: Map<string, DimensionEntry>,
+  difficultyMap: Map<string, DimensionEntry>,
+  now: Date
+): WeakAreaItem[] {
+  const items: WeakAreaItem[] = [];
+  const daysAgo = (d: Date | null) => (d ? Math.floor((now.getTime() - d.getTime()) / 86400000) : null);
+
+  for (const [name, e] of categoryMap) {
+    if (e.total < 2) continue;
+    const rate = Math.round((e.solved / e.total) * 100);
+    const lastDays = daysAgo(e.lastSolved);
+    if (rate < 50 || (lastDays !== null && lastDays > 14 && e.pending > 0)) {
+      items.push({
+        type: "category",
+        name,
+        total: e.total,
+        solved: e.solved,
+        completionRate: rate,
+        lastSolvedDaysAgo: lastDays,
+      });
+    }
+  }
+  for (const [name, e] of topicMap) {
+    if (e.total < 3) continue;
+    const rate = Math.round((e.solved / e.total) * 100);
+    if (rate < 50) {
+      items.push({
+        type: "topic",
+        name,
+        total: e.total,
+        solved: e.solved,
+        completionRate: rate,
+        lastSolvedDaysAgo: daysAgo(e.lastSolved),
+      });
+    }
+  }
+  for (const [name, e] of difficultyMap) {
+    if (e.total === 0) continue;
+    const rate = Math.round((e.solved / e.total) * 100);
+    if (rate < 30) {
+      items.push({
+        type: "difficulty",
+        name,
+        total: e.total,
+        solved: e.solved,
+        completionRate: rate,
+        lastSolvedDaysAgo: daysAgo(e.lastSolved),
+      });
+    }
+  }
+
+  return items.sort((a, b) => a.completionRate - b.completionRate).slice(0, 5);
+}
+
+function buildTips(
+  categoryMap: Map<string, DimensionEntry>,
+  topicMap: Map<string, DimensionEntry>,
+  difficultyMap: Map<string, DimensionEntry>,
+  dailySolvesMap: Map<string, number>,
+  backlogCount: number,
+  now: Date
+): Tip[] {
+  const tips: Tip[] = [];
+  const daysAgo = (d: Date | null) => (d ? Math.floor((now.getTime() - d.getTime()) / 86400000) : null);
+  const priorityOrder = { high: 0, medium: 1, low: 2 };
+
+  // "Haven't practiced" tips
+  for (const [name, e] of categoryMap) {
+    if (e.total === 0) continue;
+    const d = daysAgo(e.lastSolved);
+    if (d !== null && d > 14) tips.push({ text: `You haven't practiced ${name} in ${d} days`, priority: "high" });
+    else if (d !== null && d > 7) tips.push({ text: `You haven't practiced ${name} in ${d} days`, priority: "medium" });
+  }
+  for (const [name, e] of topicMap) {
+    const d = daysAgo(e.lastSolved);
+    if (d !== null && d > 14) tips.push({ text: `You haven't practiced ${name} in ${d} days`, priority: "high" });
+  }
+
+  // "Try harder problems"
+  const totalSolvedAll = [...difficultyMap.values()].reduce((s, e) => s + e.solved, 0);
+  const hardSolved = difficultyMap.get(Difficulty.Hard)?.solved ?? 0;
+  if (totalSolvedAll > 0 && hardSolved / totalSolvedAll < 0.15) {
+    const pct = Math.round((hardSolved / totalSolvedAll) * 100);
+    tips.push({ text: `Try harder problems — only ${pct}% of your solves are Hard difficulty`, priority: "medium" });
+  }
+
+  // "Weakest category"
+  let weakest: { name: string; rate: number } | null = null;
+  for (const [name, e] of categoryMap) {
+    if (e.total === 0) continue;
+    const rate = Math.round((e.solved / e.total) * 100);
+    if (rate < 50 && (!weakest || rate < weakest.rate)) weakest = { name, rate };
+  }
+  if (weakest)
+    tips.push({ text: `Your weakest category is ${weakest.name} at ${weakest.rate}% completion`, priority: "medium" });
+
+  // "Backlog"
+  if (backlogCount > 10)
+    tips.push({ text: `You have ${backlogCount} questions in backlog — consider solving some`, priority: "low" });
+
+  // "Great momentum"
+  let weekSolved = 0;
+  const checkDate = new Date(now);
+  for (let i = 0; i < 7; i++) {
+    weekSolved += dailySolvesMap.get(toISTDateString(checkDate)) || 0;
+    checkDate.setDate(checkDate.getDate() - 1);
+  }
+  if (weekSolved >= 5)
+    tips.push({ text: `Great momentum! You've solved ${weekSolved} questions this week`, priority: "low" });
+
+  // "Close to mastering"
+  for (const [name, e] of categoryMap) {
+    if (e.total === 0 || e.pending === 0) continue;
+    const rate = Math.round((e.solved / e.total) * 100);
+    if (rate > 80)
+      tips.push({ text: `You're close to mastering ${name} — only ${e.pending} more to go`, priority: "low" });
+  }
+
+  return tips.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]).slice(0, 5);
+}
+
+function buildMilestones(
+  categoryMap: Map<string, DimensionEntry>,
+  difficultyMap: Map<string, DimensionEntry>,
+  dailySolvesMap: Map<string, number>,
+  totalSolved: number
+): Milestone[] {
+  const milestones: Milestone[] = [];
+  const m = (name: string, achieved: boolean, progress: string) => milestones.push({ name, achieved, progress });
+
+  m("First Question", totalSolved >= 1, `${Math.min(totalSolved, 1)}/1`);
+  m("Getting Started", totalSolved >= 10, `${Math.min(totalSolved, 10)}/10`);
+  m("Half Century", totalSolved >= 50, `${Math.min(totalSolved, 50)}/50`);
+  m("Century", totalSolved >= 100, `${Math.min(totalSolved, 100)}/100`);
+
+  const hardSolved = difficultyMap.get(Difficulty.Hard)?.solved ?? 0;
+  m("First Hard", hardSolved >= 1, `${Math.min(hardSolved, 1)}/1`);
+  m("Hard Grinder", hardSolved >= 10, `${Math.min(hardSolved, 10)}/10`);
+
+  const catsWithSolves = [...categoryMap.entries()].filter(([_, v]) => v.solved > 0).length;
+  const catsWithQuestions = [...categoryMap.entries()].filter(([_, v]) => v.total > 0).length;
+  m("Category Explorer", catsWithSolves >= 3, `${Math.min(catsWithSolves, 3)}/3`);
+  m(
+    "Well Rounded",
+    catsWithQuestions > 0 && catsWithSolves >= catsWithQuestions,
+    `${catsWithSolves}/${catsWithQuestions}`
+  );
+
+  // Streak detection — walk backward from today
+  let currentStreak = 0;
+  let maxStreak = 0;
+  const checkDate = new Date();
+  for (let i = 0; i < 60; i++) {
+    const dateStr = toISTDateString(checkDate);
+    if (dailySolvesMap.has(dateStr) && dailySolvesMap.get(dateStr)! > 0) {
+      currentStreak++;
+      maxStreak = Math.max(maxStreak, currentStreak);
+    } else {
+      currentStreak = 0;
+    }
+    checkDate.setDate(checkDate.getDate() - 1);
+  }
+  m("Streak: 7 Days", maxStreak >= 7, `${Math.min(maxStreak, 7)}/7`);
+  m("Streak: 30 Days", maxStreak >= 30, `${Math.min(maxStreak, 30)}/30`);
+
+  return milestones;
+}
+
+/**
+ * GET /api/stats/insights
+ * Returns personalized insights: weak areas, tips, and milestones.
+ * Cached for 5 minutes per user, invalidated on question mutations.
+ */
+export const getInsights = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    const cacheKey = `stats:${userId}:insights`;
+
+    if (req.query.refresh !== "true") {
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        sendSuccess(res, cached);
+        return;
+      }
+    }
+
+    const now = new Date();
+    const sixtyDaysAgo = toISTMidnight(new Date());
+    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+
+    const breakdownPipeline = (dimKey: string, matchFilter: Record<string, any>) => [
+      { $match: { userId, ...matchFilter } },
+      {
+        $group: {
+          _id: { [dimKey]: `$${dimKey}`, status: "$status" },
+          count: { $sum: 1 },
+          lastSolved: { $max: { $cond: [{ $eq: ["$status", QuestionStatus.Solved] }, "$solvedAt", null] } },
+        },
+      },
+    ];
+
+    const [catRows, topicRows, diffRows, dailyRows, backlogCount, totalSolved] = await Promise.all([
+      Question.aggregate(breakdownPipeline("category", { category: { $ne: null } })),
+      Question.aggregate(breakdownPipeline("topic", { topic: { $nin: [null, ""] } })),
+      Question.aggregate(breakdownPipeline("difficulty", { difficulty: { $ne: null } })),
+      Question.aggregate([
+        { $match: { userId, status: QuestionStatus.Solved, solvedAt: { $gte: sixtyDaysAgo } } },
+        { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt" } }, count: { $sum: 1 } } },
+        { $sort: { _id: 1 } },
+      ]),
+      Question.countDocuments({ userId, category: null }),
+      Question.countDocuments({ userId, status: QuestionStatus.Solved }),
+    ]);
+
+    const categoryMap = reduceByDimension(catRows, "category", Object.values(PrepCategory));
+    const topicMap = reduceByDimension(topicRows, "topic");
+    const difficultyMap = reduceByDimension(diffRows, "difficulty", Object.values(Difficulty));
+    const dailySolvesMap = new Map<string, number>(dailyRows.map((r: any) => [r._id, r.count]));
+
+    const result = {
+      weakAreas: buildWeakAreas(categoryMap, topicMap, difficultyMap, now),
+      tips: buildTips(categoryMap, topicMap, difficultyMap, dailySolvesMap, backlogCount, now),
+      milestones: buildMilestones(categoryMap, difficultyMap, dailySolvesMap, totalSolved),
+    };
+
+    cache.set(cacheKey, result);
+    sendSuccess(res, result);
+  } catch (error) {
+    logger.error((error as Error).message);
+    sendError(res, "Error fetching insights");
   }
 };
