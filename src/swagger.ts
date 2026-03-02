@@ -807,6 +807,64 @@ const swaggerSpec = {
         },
       },
     },
+    "/api/stats/insights": {
+      get: {
+        tags: ["Stats"],
+        summary: "Get personalized insights: weak areas, tips, and milestones (cached 5min)",
+        parameters: [
+          { name: "refresh", in: "query", schema: { type: "string" as const, enum: ["true"] }, description: "Force recomputation, bypass cache" },
+        ],
+        responses: {
+          "200": {
+            description: "Insights with weak areas, tips, and milestones",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object" as const,
+                  properties: {
+                    weakAreas: {
+                      type: "array" as const,
+                      items: {
+                        type: "object" as const,
+                        properties: {
+                          type: { type: "string" as const, enum: ["category", "topic", "difficulty"] },
+                          name: { type: "string" as const },
+                          total: { type: "integer" as const },
+                          solved: { type: "integer" as const },
+                          completionRate: { type: "integer" as const },
+                          lastSolvedDaysAgo: { type: "integer" as const, nullable: true },
+                        },
+                      },
+                    },
+                    tips: {
+                      type: "array" as const,
+                      items: {
+                        type: "object" as const,
+                        properties: {
+                          text: { type: "string" as const },
+                          priority: { type: "string" as const, enum: ["high", "medium", "low"] },
+                        },
+                      },
+                    },
+                    milestones: {
+                      type: "array" as const,
+                      items: {
+                        type: "object" as const,
+                        properties: {
+                          name: { type: "string" as const },
+                          achieved: { type: "boolean" as const },
+                          progress: { type: "string" as const },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
   },
   tags: [
     { name: "Health", description: "Health check" },

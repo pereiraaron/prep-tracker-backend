@@ -13,6 +13,8 @@ import {
   getCumulativeProgress,
   getHeatmap,
   getDifficultyByCategory,
+  getStreaks,
+  getInsights,
 } from "../controllers/stats";
 
 const router = Router();
@@ -29,5 +31,7 @@ router.get("/weekly-progress", authenticate, getWeeklyProgress);
 router.get("/cumulative-progress", authenticate, getCumulativeProgress);
 router.get("/heatmap", authenticate, getHeatmap);
 router.get("/difficulty-by-category", authenticate, getDifficultyByCategory);
+router.get("/streaks", authenticate, getStreaks);
+router.get("/insights", authenticate, getInsights);
 
 export default router;

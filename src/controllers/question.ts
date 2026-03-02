@@ -4,6 +4,7 @@ import { AuthRequest } from "../types/auth";
 import { QuestionStatus } from "../types/question";
 import { sendSuccess, sendPaginated, sendError } from "../utils/response";
 import { logger } from "../utils/logger";
+import { cache } from "../utils/cache";
 
 // ---- CRUD ----
 
@@ -28,6 +29,7 @@ export const createQuestion = async (req: AuthRequest, res: Response) => {
       solvedAt: new Date(),
     });
 
+    cache.invalidate(`insights:${userId}`);
     sendSuccess(res, question, 201);
   } catch (error) {
     logger.error((error as Error).message);
@@ -143,6 +145,7 @@ export const updateQuestion = async (req: AuthRequest, res: Response) => {
 
     await question.save();
 
+    cache.invalidate(`insights:${userId}`);
     sendSuccess(res, question);
   } catch (error) {
     logger.error((error as Error).message);
@@ -160,6 +163,7 @@ export const deleteQuestion = async (req: AuthRequest, res: Response) => {
       return;
     }
 
+    cache.invalidate(`insights:${userId}`);
     sendSuccess(res, { message: "Question deleted" });
   } catch (error) {
     logger.error((error as Error).message);
@@ -188,6 +192,7 @@ export const solveQuestion = async (req: AuthRequest, res: Response) => {
     question.solvedAt = new Date();
     await question.save();
 
+    cache.invalidate(`insights:${userId}`);
     sendSuccess(res, question);
   } catch (error) {
     logger.error((error as Error).message);
@@ -216,6 +221,7 @@ export const resetQuestion = async (req: AuthRequest, res: Response) => {
     question.solvedAt = undefined;
     await question.save();
 
+    cache.invalidate(`insights:${userId}`);
     sendSuccess(res, question);
   } catch (error) {
     logger.error((error as Error).message);
@@ -312,6 +318,7 @@ export const bulkDeleteQuestions = async (req: AuthRequest, res: Response) => {
 
     const result = await Question.deleteMany({ _id: { $in: ids }, userId });
 
+    cache.invalidate(`insights:${userId}`);
     sendSuccess(res, {
       message: `Deleted ${result.deletedCount} questions`,
       deletedCount: result.deletedCount,
@@ -343,6 +350,7 @@ export const createBacklogQuestion = async (req: AuthRequest, res: Response) => 
       companyTags,
     });
 
+    cache.invalidate(`insights:${userId}`);
     sendSuccess(res, question, 201);
   } catch (error) {
     logger.error((error as Error).message);

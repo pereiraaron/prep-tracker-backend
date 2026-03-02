@@ -10,6 +10,7 @@ import {
   getWeeklyProgress,
   getCumulativeProgress,
   getDifficultyByCategory,
+  getInsights,
 } from "../stats";
 import { Question } from "../../models/Question";
 import { QuestionStatus, Difficulty, QuestionSource } from "../../types/question";
@@ -302,5 +303,100 @@ describe("getDifficultyByCategory", () => {
 
     const behavioral = body.find((c: any) => c.category === PrepCategory.Behavioral);
     expect(behavioral.total).toBe(0);
+  });
+});
+
+// ---- getInsights ----
+describe("getInsights", () => {
+  const mockAllEmpty = () => {
+    (Question.aggregate as jest.Mock)
+      .mockResolvedValueOnce([]) // categories
+      .mockResolvedValueOnce([]) // topics
+      .mockResolvedValueOnce([]) // difficulties
+      .mockResolvedValueOnce([]); // daily solves
+    (Question.countDocuments as jest.Mock)
+      .mockResolvedValueOnce(0) // backlog
+      .mockResolvedValueOnce(0); // total solved
+  };
+
+  it("returns empty insights for user with no data", async () => {
+    mockAllEmpty();
+
+    const res = mockRes();
+    await getInsights(mockReq({ query: { refresh: "true" } }), res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const { weakAreas, tips, milestones } = res.json.mock.calls[0][0].data;
+    expect(weakAreas).toEqual([]);
+    expect(tips).toEqual([]);
+    expect(milestones.every((m: any) => !m.achieved)).toBe(true);
+  });
+
+  it("identifies weak categories (< 50%, >= 2 total)", async () => {
+    (Question.aggregate as jest.Mock)
+      .mockResolvedValueOnce([
+        { _id: { category: "dsa", status: "solved" }, count: 2, lastSolved: new Date() },
+        { _id: { category: "dsa", status: "pending" }, count: 8, lastSolved: null },
+      ]) // categories: dsa 2/10 = 20%
+      .mockResolvedValueOnce([]) // topics
+      .mockResolvedValueOnce([]) // difficulties
+      .mockResolvedValueOnce([]); // daily
+    (Question.countDocuments as jest.Mock)
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(2);
+
+    const res = mockRes();
+    await getInsights(mockReq({ query: { refresh: "true" } }), res);
+
+    const { weakAreas } = res.json.mock.calls[0][0].data;
+    expect(weakAreas.length).toBeGreaterThan(0);
+    const dsa = weakAreas.find((w: any) => w.name === "dsa");
+    expect(dsa).toBeDefined();
+    expect(dsa.completionRate).toBe(20);
+    expect(dsa.type).toBe("category");
+  });
+
+  it("generates tips and computes milestones", async () => {
+    (Question.aggregate as jest.Mock)
+      .mockResolvedValueOnce([
+        { _id: { category: "dsa", status: "solved" }, count: 15, lastSolved: new Date() },
+        { _id: { category: "dsa", status: "pending" }, count: 5, lastSolved: null },
+      ])
+      .mockResolvedValueOnce([]) // topics
+      .mockResolvedValueOnce([
+        { _id: { difficulty: "easy", status: "solved" }, count: 10, lastSolved: new Date() },
+        { _id: { difficulty: "medium", status: "solved" }, count: 4, lastSolved: new Date() },
+        { _id: { difficulty: "hard", status: "solved" }, count: 1, lastSolved: new Date() },
+      ])
+      .mockResolvedValueOnce([]); // daily
+    (Question.countDocuments as jest.Mock)
+      .mockResolvedValueOnce(15) // backlog > 10
+      .mockResolvedValueOnce(15); // total solved
+
+    const res = mockRes();
+    await getInsights(mockReq({ query: { refresh: "true" } }), res);
+
+    const { tips, milestones } = res.json.mock.calls[0][0].data;
+
+    // Should have backlog tip (15 > 10)
+    expect(tips.some((t: any) => t.text.includes("backlog"))).toBe(true);
+
+    // Milestones
+    const firstQ = milestones.find((m: any) => m.name === "First Question");
+    expect(firstQ.achieved).toBe(true);
+    const getting = milestones.find((m: any) => m.name === "Getting Started");
+    expect(getting.achieved).toBe(true);
+    const century = milestones.find((m: any) => m.name === "Century");
+    expect(century.achieved).toBe(false);
+    expect(century.progress).toBe("15/100");
+  });
+
+  it("returns 500 on error", async () => {
+    (Question.aggregate as jest.Mock).mockRejectedValue(new Error("db error"));
+
+    const res = mockRes();
+    await getInsights(mockReq({ query: { refresh: "true" } }), res);
+
+    expect(res.status).toHaveBeenCalledWith(500);
   });
 });

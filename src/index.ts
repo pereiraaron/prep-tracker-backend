@@ -52,11 +52,11 @@ app.use(express.json({ limit: "1mb" }));
 app.use(requestLogger);
 
 // Swagger docs (relaxed CSP for CDN scripts)
-app.get("/api-docs/spec.json", (_, res) => {
+app.get("/api/docs/spec.json", (_, res) => {
   res.status(200).json(swaggerSpec);
 });
 app.get(
-  "/api-docs",
+  "/api/docs",
   helmet({
     contentSecurityPolicy: {
       directives: {
@@ -76,7 +76,7 @@ app.get(
 </head><body>
 <div id="swagger-ui"></div>
 <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
-<script>SwaggerUIBundle({url:"/api-docs/spec.json",dom_id:"#swagger-ui"})</script>
+<script>SwaggerUIBundle({url:"/api/docs/spec.json",dom_id:"#swagger-ui"})</script>
 </body></html>`);
   }
 );
