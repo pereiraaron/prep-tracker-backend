@@ -15,10 +15,12 @@ import {
   getDifficultyByCategory,
   getStreaks,
   getInsights,
+  getBatch,
 } from "../controllers/stats";
 
 const router = Router();
 
+router.get("/batch", authenticate, getBatch);
 router.get("/overview", authenticate, getOverview);
 router.get("/categories", authenticate, getCategoryBreakdown);
 router.get("/difficulties", authenticate, getDifficultyBreakdown);
