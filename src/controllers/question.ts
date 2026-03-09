@@ -93,7 +93,7 @@ export const getAllQuestions = async (req: AuthRequest, res: Response) => {
     const skip = (page - 1) * limit;
 
     const [questions, total] = await Promise.all([
-      Question.find(filter).sort(sort).skip(skip).limit(limit).lean({ virtuals: true }),
+      Question.find(filter).sort(sort).skip(skip).limit(limit).lean(),
       Question.countDocuments(filter),
     ]);
 
@@ -107,7 +107,7 @@ export const getAllQuestions = async (req: AuthRequest, res: Response) => {
 export const getQuestionById = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const question = await Question.findOne({ _id: req.params.id, userId }).lean({ virtuals: true });
+    const question = await Question.findOne({ _id: req.params.id, userId }).lean();
 
     if (!question) {
       sendError(res, "Question not found", 404);
@@ -180,7 +180,7 @@ export const solveQuestion = async (req: AuthRequest, res: Response) => {
       { _id: req.params.id, userId, status: { $ne: QuestionStatus.Solved } },
       { $set: { status: QuestionStatus.Solved, solvedAt: new Date() } },
       { new: true }
-    ).lean({ virtuals: true });
+    ).lean();
 
     if (!question) {
       const exists = await Question.exists({ _id: req.params.id, userId });
@@ -209,7 +209,7 @@ export const resetQuestion = async (req: AuthRequest, res: Response) => {
       { _id: req.params.id, userId, status: QuestionStatus.Solved },
       { $set: { status: QuestionStatus.Pending }, $unset: { solvedAt: 1 } },
       { new: true }
-    ).lean({ virtuals: true });
+    ).lean();
 
     if (!question) {
       const exists = await Question.exists({ _id: req.params.id, userId });
@@ -238,7 +238,7 @@ export const toggleStarred = async (req: AuthRequest, res: Response) => {
       { _id: req.params.id, userId },
       [{ $set: { starred: { $not: "$starred" } } }],
       { new: true }
-    ).lean({ virtuals: true });
+    ).lean();
 
     if (!question) {
       sendError(res, "Question not found", 404);
@@ -289,7 +289,7 @@ export const searchQuestions = async (req: AuthRequest, res: Response) => {
         .sort({ score: { $meta: "textScore" } })
         .skip(skip)
         .limit(limit)
-        .lean({ virtuals: true }),
+        .lean(),
       Question.countDocuments(filter),
     ]);
 
@@ -380,7 +380,7 @@ export const getBacklogQuestions = async (req: AuthRequest, res: Response) => {
     const skip = (page - 1) * limit;
 
     const [questions, total] = await Promise.all([
-      Question.find(filter).sort(sort).skip(skip).limit(limit).lean({ virtuals: true }),
+      Question.find(filter).sort(sort).skip(skip).limit(limit).lean(),
       Question.countDocuments(filter),
     ]);
 
