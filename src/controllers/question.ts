@@ -279,6 +279,7 @@ export const searchQuestions = async (req: AuthRequest, res: Response) => {
     // Additional filters
     if (req.query.status) filter.status = req.query.status as string;
     if (req.query.difficulty) filter.difficulty = req.query.difficulty as string;
+    if (req.query.category) filter.category = req.query.category as string;
 
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));

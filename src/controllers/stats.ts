@@ -1050,41 +1050,7 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
         const cacheKey = `stats:${userId}:insights`;
         const cached = cache.get(cacheKey);
         if (cached) return cached;
-
-        const now = new Date();
-        const sixtyDaysAgo = toISTMidnight(new Date());
-        sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
-        const bPipeline = (dimKey: string, matchFilter: Record<string, any>) => [
-          { $match: { userId, ...matchFilter } },
-          {
-            $group: {
-              _id: { [dimKey]: `$${dimKey}`, status: "$status" },
-              count: { $sum: 1 },
-              lastSolved: { $max: { $cond: [{ $eq: ["$status", QuestionStatus.Solved] }, "$solvedAt", null] } },
-            },
-          },
-        ];
-        const [catRows, topicRows, diffRows, dailyRows, backlogCount, totalSolved] = await Promise.all([
-          Question.aggregate(bPipeline("category", { category: { $ne: null } })),
-          Question.aggregate(bPipeline("topic", { topic: { $nin: [null, ""] } })),
-          Question.aggregate(bPipeline("difficulty", { difficulty: { $ne: null } })),
-          Question.aggregate([
-            { $match: { userId, status: QuestionStatus.Solved, solvedAt: { $gte: sixtyDaysAgo } } },
-            { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt" } }, count: { $sum: 1 } } },
-            { $sort: { _id: 1 } },
-          ]),
-          Question.countDocuments({ userId, category: null }),
-          Question.countDocuments({ userId, status: QuestionStatus.Solved }),
-        ]);
-        const catMap = reduceByDimension(catRows, "category", Object.values(PrepCategory));
-        const topicMap = reduceByDimension(topicRows, "topic");
-        const diffMap = reduceByDimension(diffRows, "difficulty", Object.values(Difficulty));
-        const dailySolvesMap = new Map<string, number>(dailyRows.map((r: any) => [r._id, r.count]));
-        const result = {
-          weakAreas: buildWeakAreas(catMap, topicMap, diffMap, now),
-          tips: buildTips(catMap, topicMap, diffMap, dailySolvesMap, backlogCount, now),
-          milestones: buildMilestones(catMap, diffMap, dailySolvesMap, totalSolved),
-        };
+        const result = await fetchInsightsData(userId!);
         cache.set(cacheKey, result);
         return result;
       };
@@ -1131,6 +1097,54 @@ interface Milestone {
   achieved: boolean;
   progress: string;
 }
+
+/**
+ * Fetches all insights data in a single $facet aggregation (1 DB round trip).
+ */
+const fetchInsightsData = async (userId: string) => {
+  const now = new Date();
+  const sixtyDaysAgo = toISTMidnight(new Date());
+  sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+
+  const dimGroup = (dimKey: string) => ({
+    $group: {
+      _id: { [dimKey]: `$${dimKey}`, status: "$status" },
+      count: { $sum: 1 },
+      lastSolved: { $max: { $cond: [{ $eq: ["$status", QuestionStatus.Solved] }, "$solvedAt", null] } },
+    },
+  });
+
+  const [facetResult] = await Question.aggregate([
+    { $match: { userId } },
+    {
+      $facet: {
+        catRows: [{ $match: { category: { $ne: null } } }, dimGroup("category")],
+        topicRows: [{ $match: { topic: { $nin: [null, ""] } } }, dimGroup("topic")],
+        diffRows: [{ $match: { difficulty: { $ne: null } } }, dimGroup("difficulty")],
+        dailyRows: [
+          { $match: { status: QuestionStatus.Solved, solvedAt: { $gte: sixtyDaysAgo } } },
+          { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt" } }, count: { $sum: 1 } } },
+          { $sort: { _id: 1 } },
+        ],
+        backlogCount: [{ $match: { category: null } }, { $count: "count" }],
+        totalSolved: [{ $match: { status: QuestionStatus.Solved } }, { $count: "count" }],
+      },
+    },
+  ]);
+
+  const categoryMap = reduceByDimension(facetResult.catRows, "category", Object.values(PrepCategory));
+  const topicMap = reduceByDimension(facetResult.topicRows, "topic");
+  const difficultyMap = reduceByDimension(facetResult.diffRows, "difficulty", Object.values(Difficulty));
+  const dailySolvesMap = new Map<string, number>(facetResult.dailyRows.map((r: any) => [r._id, r.count]));
+  const backlogCount = facetResult.backlogCount[0]?.count ?? 0;
+  const totalSolved = facetResult.totalSolved[0]?.count ?? 0;
+
+  return {
+    weakAreas: buildWeakAreas(categoryMap, topicMap, difficultyMap, now),
+    tips: buildTips(categoryMap, topicMap, difficultyMap, dailySolvesMap, backlogCount, now),
+    milestones: buildMilestones(categoryMap, difficultyMap, dailySolvesMap, totalSolved),
+  };
+};
 
 function reduceByDimension(rows: any[], dimKey: string, initKeys?: string[]): Map<string, DimensionEntry> {
   const map = new Map<string, DimensionEntry>();
@@ -1222,41 +1236,46 @@ function buildTips(
   const daysAgo = (d: Date | null) => (d ? Math.floor((now.getTime() - d.getTime()) / 86400000) : null);
   const priorityOrder = { high: 0, medium: 1, low: 2 };
 
-  // "Haven't practiced" tips
+  // Rusty categories — haven't practiced in a while
   for (const [name, e] of categoryMap) {
     if (e.total === 0) continue;
     const d = daysAgo(e.lastSolved);
-    if (d !== null && d > 14) tips.push({ text: `You haven't practiced ${name} in ${d} days`, priority: "high" });
-    else if (d !== null && d > 7) tips.push({ text: `You haven't practiced ${name} in ${d} days`, priority: "medium" });
+    if (d !== null && d > 14)
+      tips.push({ text: `${name} is getting rusty — last practiced ${d} days ago. Time for a refresher!`, priority: "high" });
+    else if (d !== null && d > 7)
+      tips.push({ text: `It's been ${d} days since you solved a ${name} question. Keep the streak alive!`, priority: "medium" });
   }
   for (const [name, e] of topicMap) {
     const d = daysAgo(e.lastSolved);
-    if (d !== null && d > 14) tips.push({ text: `You haven't practiced ${name} in ${d} days`, priority: "high" });
+    if (d !== null && d > 14)
+      tips.push({ text: `${name} is getting rusty — last practiced ${d} days ago`, priority: "high" });
   }
 
-  // "Try harder problems"
+  // Difficulty balance
   const totalSolvedAll = [...difficultyMap.values()].reduce((s, e) => s + e.solved, 0);
   const hardSolved = difficultyMap.get(Difficulty.Hard)?.solved ?? 0;
   if (totalSolvedAll > 0 && hardSolved / totalSolvedAll < 0.15) {
-    const pct = Math.round((hardSolved / totalSolvedAll) * 100);
-    tips.push({ text: `Try harder problems — only ${pct}% of your solves are Hard difficulty`, priority: "medium" });
+    if (hardSolved === 0)
+      tips.push({ text: `No Hard problems solved yet — try one to level up your problem-solving skills`, priority: "medium" });
+    else
+      tips.push({ text: `Only ${hardSolved} of your ${totalSolvedAll} solves are Hard — mix in a few more to build confidence`, priority: "medium" });
   }
 
-  // "Weakest category"
-  let weakest: { name: string; rate: number } | null = null;
+  // Weakest category
+  let weakest: { name: string; rate: number; pending: number } | null = null;
   for (const [name, e] of categoryMap) {
     if (e.total === 0) continue;
     const rate = Math.round((e.solved / e.total) * 100);
-    if (rate < 50 && (!weakest || rate < weakest.rate)) weakest = { name, rate };
+    if (rate < 50 && (!weakest || rate < weakest.rate)) weakest = { name, rate, pending: e.pending };
   }
   if (weakest)
-    tips.push({ text: `Your weakest category is ${weakest.name} at ${weakest.rate}% completion`, priority: "medium" });
+    tips.push({ text: `${weakest.name} needs attention — ${weakest.pending} unsolved question${weakest.pending === 1 ? "" : "s"} remaining`, priority: "medium" });
 
-  // "Backlog"
+  // Backlog reminder
   if (backlogCount > 10)
-    tips.push({ text: `You have ${backlogCount} questions in backlog — consider solving some`, priority: "low" });
+    tips.push({ text: `${backlogCount} questions waiting in your backlog — pick one and knock it out!`, priority: "low" });
 
-  // "Great momentum"
+  // Weekly momentum
   let weekSolved = 0;
   const checkDate = new Date(now);
   for (let i = 0; i < 7; i++) {
@@ -1264,14 +1283,14 @@ function buildTips(
     checkDate.setDate(checkDate.getDate() - 1);
   }
   if (weekSolved >= 5)
-    tips.push({ text: `Great momentum! You've solved ${weekSolved} questions this week`, priority: "low" });
+    tips.push({ text: `${weekSolved} questions solved this week — you're on fire! Keep it going`, priority: "low" });
 
-  // "Close to mastering"
+  // Close to mastering
   for (const [name, e] of categoryMap) {
     if (e.total === 0 || e.pending === 0) continue;
     const rate = Math.round((e.solved / e.total) * 100);
     if (rate > 80)
-      tips.push({ text: `You're close to mastering ${name} — only ${e.pending} more to go`, priority: "low" });
+      tips.push({ text: `Almost there with ${name} — just ${e.pending} more to master it`, priority: "low" });
   }
 
   return tips.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]).slice(0, 5);
@@ -1342,45 +1361,7 @@ export const getInsights = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    const now = new Date();
-    const sixtyDaysAgo = toISTMidnight(new Date());
-    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
-
-    const breakdownPipeline = (dimKey: string, matchFilter: Record<string, any>) => [
-      { $match: { userId, ...matchFilter } },
-      {
-        $group: {
-          _id: { [dimKey]: `$${dimKey}`, status: "$status" },
-          count: { $sum: 1 },
-          lastSolved: { $max: { $cond: [{ $eq: ["$status", QuestionStatus.Solved] }, "$solvedAt", null] } },
-        },
-      },
-    ];
-
-    const [catRows, topicRows, diffRows, dailyRows, backlogCount, totalSolved] = await Promise.all([
-      Question.aggregate(breakdownPipeline("category", { category: { $ne: null } })),
-      Question.aggregate(breakdownPipeline("topic", { topic: { $nin: [null, ""] } })),
-      Question.aggregate(breakdownPipeline("difficulty", { difficulty: { $ne: null } })),
-      Question.aggregate([
-        { $match: { userId, status: QuestionStatus.Solved, solvedAt: { $gte: sixtyDaysAgo } } },
-        { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt" } }, count: { $sum: 1 } } },
-        { $sort: { _id: 1 } },
-      ]),
-      Question.countDocuments({ userId, category: null }),
-      Question.countDocuments({ userId, status: QuestionStatus.Solved }),
-    ]);
-
-    const categoryMap = reduceByDimension(catRows, "category", Object.values(PrepCategory));
-    const topicMap = reduceByDimension(topicRows, "topic");
-    const difficultyMap = reduceByDimension(diffRows, "difficulty", Object.values(Difficulty));
-    const dailySolvesMap = new Map<string, number>(dailyRows.map((r: any) => [r._id, r.count]));
-
-    const result = {
-      weakAreas: buildWeakAreas(categoryMap, topicMap, difficultyMap, now),
-      tips: buildTips(categoryMap, topicMap, difficultyMap, dailySolvesMap, backlogCount, now),
-      milestones: buildMilestones(categoryMap, difficultyMap, dailySolvesMap, totalSolved),
-    };
-
+    const result = await fetchInsightsData(userId!);
     cache.set(cacheKey, result);
     sendSuccess(res, result);
   } catch (error) {
