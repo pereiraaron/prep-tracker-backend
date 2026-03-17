@@ -15,6 +15,7 @@ export enum Difficulty {
 export enum QuestionSource {
   Leetcode = "leetcode",
   GreatFrontend = "greatfrontend",
+  MiniChallenges = "minichallenges",
   GeeksforGeeks = "geeksforgeeks",
   Linkedin = "linkedin",
   Medium = "medium",
