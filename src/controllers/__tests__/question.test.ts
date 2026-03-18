@@ -161,7 +161,7 @@ describe("getAllQuestions", () => {
     await getAllQuestions(req, res);
 
     const findFilter = (Question.find as jest.Mock).mock.calls[0][0];
-    expect(findFilter.category).toBeNull();
+    expect(findFilter.status).toBe(QuestionStatus.Pending);
     expect(findFilter.starred).toBe(true);
   });
 
@@ -175,7 +175,7 @@ describe("getAllQuestions", () => {
     await getAllQuestions(req, res);
 
     const findFilter = (Question.find as jest.Mock).mock.calls[0][0];
-    expect(findFilter.category).toEqual({ $ne: null });
+    expect(findFilter.status).toBe(QuestionStatus.Solved);
   });
 });
 
@@ -402,20 +402,20 @@ describe("bulkDeleteQuestions", () => {
 
 // ---- createBacklogQuestion ----
 describe("createBacklogQuestion", () => {
-  it("creates with null category", async () => {
-    (Question.create as jest.Mock).mockResolvedValue(mockQuestionDoc({ category: null }));
+  it("creates with provided category", async () => {
+    (Question.create as jest.Mock).mockResolvedValue(mockQuestionDoc({ category: "dsa" }));
 
     const res = mockRes();
-    await createBacklogQuestion(mockReq({ body: { title: "Backlog Q" } }), res);
+    await createBacklogQuestion(mockReq({ body: { title: "Backlog Q", category: "dsa", url: "https://example.com" } }), res);
 
     expect(res.status).toHaveBeenCalledWith(201);
-    expect(Question.create).toHaveBeenCalledWith(expect.objectContaining({ category: null }));
+    expect(Question.create).toHaveBeenCalledWith(expect.objectContaining({ category: "dsa" }));
   });
 });
 
 // ---- getBacklogQuestions ----
 describe("getBacklogQuestions", () => {
-  it("filters by category null", async () => {
+  it("filters by pending status", async () => {
     (Question.find as jest.Mock).mockReturnValue(mockFindChain([]));
     (Question.countDocuments as jest.Mock).mockResolvedValue(0);
 
@@ -423,6 +423,6 @@ describe("getBacklogQuestions", () => {
     await getBacklogQuestions(mockReq(), res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    expect((Question.find as jest.Mock).mock.calls[0][0].category).toBeNull();
+    expect((Question.find as jest.Mock).mock.calls[0][0].status).toBe(QuestionStatus.Pending);
   });
 });

@@ -37,9 +37,10 @@ export const createBacklogQuestionSchema = z.object({
   difficulty: z.enum(Difficulty).optional(),
   topic: z.string().max(100).optional(),
   source: z.enum(QuestionSource).optional(),
-  url: z.url().max(2000).optional().or(z.literal("")),
+  url: z.url("URL is required").max(2000),
   tags: z.array(z.string().max(50)).max(20).optional(),
   companyTags: z.array(z.string().max(50)).max(20).optional(),
+  category: z.enum(PrepCategory),
 });
 
 export const bulkDeleteSchema = z.object({

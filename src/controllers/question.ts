@@ -45,13 +45,13 @@ export const getAllQuestions = async (req: AuthRequest, res: Response) => {
     // Backlog filter: ?backlog=true for backlog only, ?backlog=all for everything, default excludes backlog
     const backlog = req.query.backlog as string;
     if (backlog === "true") {
-      filter.category = null;
+      filter.status = QuestionStatus.Pending;
     } else if (backlog !== "all") {
-      filter.category = { $ne: null };
+      filter.status = QuestionStatus.Solved;
     }
 
-    if (req.query.category && !filter.category) filter.category = req.query.category as string;
-    if (req.query.status) filter.status = req.query.status as string;
+    if (req.query.category) filter.category = req.query.category as string;
+    if (req.query.status && !filter.status) filter.status = req.query.status as string;
     if (req.query.difficulty) filter.difficulty = req.query.difficulty as string;
     if (req.query.topic) filter.topic = req.query.topic as string;
     if (req.query.source) filter.source = req.query.source as string;
@@ -280,6 +280,7 @@ export const searchQuestions = async (req: AuthRequest, res: Response) => {
     if (req.query.status) filter.status = req.query.status as string;
     if (req.query.difficulty) filter.difficulty = req.query.difficulty as string;
     if (req.query.category) filter.category = req.query.category as string;
+    if (req.query.source) filter.source = req.query.source as string;
 
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
@@ -331,11 +332,11 @@ export const bulkDeleteQuestions = async (req: AuthRequest, res: Response) => {
 export const createBacklogQuestion = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const { title, notes, solution, difficulty, topic, source, url, tags, companyTags } = req.body;
+    const { title, notes, solution, difficulty, topic, source, url, tags, companyTags, category } = req.body;
 
     const question = await Question.create({
       userId,
-      category: null,
+      category,
       title,
       notes,
       solution,
@@ -358,9 +359,8 @@ export const createBacklogQuestion = async (req: AuthRequest, res: Response) => 
 export const getBacklogQuestions = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const filter: Record<string, any> = { userId, category: null };
+    const filter: Record<string, any> = { userId, status: QuestionStatus.Pending };
 
-    if (req.query.status) filter.status = req.query.status as string;
     if (req.query.difficulty) filter.difficulty = req.query.difficulty as string;
     if (req.query.topic) filter.topic = req.query.topic as string;
     if (req.query.source) filter.source = req.query.source as string;
