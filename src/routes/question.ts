@@ -5,6 +5,7 @@ import {
   createQuestionSchema,
   updateQuestionSchema,
   createBacklogQuestionSchema,
+  solveQuestionSchema,
   bulkDeleteSchema,
 } from "../validators/question";
 import {
@@ -34,7 +35,7 @@ router
 
 router.route("/").get(authenticate, getAllQuestions).post(authenticate, validate(createQuestionSchema), createQuestion);
 
-router.patch("/:id/solve", authenticate, solveQuestion);
+router.patch("/:id/solve", authenticate, validate(solveQuestionSchema), solveQuestion);
 router.patch("/:id/reset", authenticate, resetQuestion);
 router.patch("/:id/star", authenticate, toggleStarred);
 

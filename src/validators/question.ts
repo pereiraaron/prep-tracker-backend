@@ -43,6 +43,10 @@ export const createBacklogQuestionSchema = z.object({
   category: z.enum(PrepCategory),
 });
 
+export const solveQuestionSchema = z.object({
+  solution: z.string().min(1, "Solution is required").max(50000),
+});
+
 export const bulkDeleteSchema = z.object({
   ids: z.array(objectId).min(1, "ids must be a non-empty array").max(100),
 });

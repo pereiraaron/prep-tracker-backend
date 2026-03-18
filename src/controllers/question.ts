@@ -176,9 +176,10 @@ export const deleteQuestion = async (req: AuthRequest, res: Response) => {
 export const solveQuestion = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
+    const { solution } = req.body;
     const question = await Question.findOneAndUpdate(
       { _id: req.params.id, userId, status: { $ne: QuestionStatus.Solved } },
-      { $set: { status: QuestionStatus.Solved, solvedAt: new Date() } },
+      { $set: { status: QuestionStatus.Solved, solvedAt: new Date(), ...(solution ? { solution } : {}) } },
       { new: true }
     ).lean();
 
@@ -361,6 +362,7 @@ export const getBacklogQuestions = async (req: AuthRequest, res: Response) => {
     const userId = req.user?.id;
     const filter: Record<string, any> = { userId, status: QuestionStatus.Pending };
 
+    if (req.query.category) filter.category = req.query.category as string;
     if (req.query.difficulty) filter.difficulty = req.query.difficulty as string;
     if (req.query.topic) filter.topic = req.query.topic as string;
     if (req.query.source) filter.source = req.query.source as string;
