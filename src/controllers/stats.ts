@@ -36,7 +36,7 @@ export const getOverview = async (req: AuthRequest, res: Response) => {
             { $group: { _id: "$difficulty", count: { $sum: 1 } } },
           ],
           total: [{ $count: "count" }],
-          backlog: [{ $match: { category: null } }, { $count: "count" }],
+          backlog: [{ $match: { status: QuestionStatus.Pending } }, { $count: "count" }],
         },
       },
     ]);
@@ -737,7 +737,7 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
               byCategory: [{ $match: { category: { $ne: null } } }, { $group: { _id: "$category", count: { $sum: 1 } } }],
               byDifficulty: [{ $match: { difficulty: { $ne: null } } }, { $group: { _id: "$difficulty", count: { $sum: 1 } } }],
               total: [{ $count: "count" }],
-              backlog: [{ $match: { category: null } }, { $count: "count" }],
+              backlog: [{ $match: { status: QuestionStatus.Pending } }, { $count: "count" }],
             },
           },
         ]);
@@ -1126,7 +1126,13 @@ const fetchInsightsData = async (userId: string) => {
           { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt" } }, count: { $sum: 1 } } },
           { $sort: { _id: 1 } },
         ],
-        backlogCount: [{ $match: { category: null } }, { $count: "count" }],
+        backlogCount: [{ $match: { status: QuestionStatus.Pending } }, { $count: "count" }],
+        backlogOldest: [
+          { $match: { status: QuestionStatus.Pending } },
+          { $sort: { createdAt: 1 } },
+          { $limit: 1 },
+          { $project: { createdAt: 1 } },
+        ],
         totalSolved: [{ $match: { status: QuestionStatus.Solved } }, { $count: "count" }],
       },
     },
@@ -1137,11 +1143,12 @@ const fetchInsightsData = async (userId: string) => {
   const difficultyMap = reduceByDimension(facetResult.diffRows, "difficulty", Object.values(Difficulty));
   const dailySolvesMap = new Map<string, number>(facetResult.dailyRows.map((r: any) => [r._id, r.count]));
   const backlogCount = facetResult.backlogCount[0]?.count ?? 0;
+  const backlogOldestDate: Date | null = facetResult.backlogOldest[0]?.createdAt ?? null;
   const totalSolved = facetResult.totalSolved[0]?.count ?? 0;
 
   return {
     weakAreas: buildWeakAreas(categoryMap, topicMap, difficultyMap, now),
-    tips: buildTips(categoryMap, topicMap, difficultyMap, dailySolvesMap, backlogCount, now),
+    tips: buildTips(categoryMap, topicMap, difficultyMap, dailySolvesMap, backlogCount, backlogOldestDate, now),
     milestones: buildMilestones(categoryMap, difficultyMap, dailySolvesMap, totalSolved),
   };
 };
@@ -1184,7 +1191,7 @@ function buildWeakAreas(
     if (rate < 50 || (lastDays !== null && lastDays > 14 && e.pending > 0)) {
       items.push({
         type: "category",
-        name,
+        name: CATEGORY_LABEL[name] || name,
         total: e.total,
         solved: e.solved,
         completionRate: rate,
@@ -1230,15 +1237,16 @@ function buildTips(
   difficultyMap: Map<string, DimensionEntry>,
   dailySolvesMap: Map<string, number>,
   backlogCount: number,
+  backlogOldestDate: Date | null,
   now: Date
 ): Tip[] {
   const tips: Tip[] = [];
   const daysAgo = (d: Date | null) => (d ? Math.floor((now.getTime() - d.getTime()) / 86400000) : null);
   const priorityOrder = { high: 0, medium: 1, low: 2 };
 
-  // Rusty categories — haven't practiced in a while
+  // Rusty categories — haven't practiced in a while (only if at least 1 solved)
   for (const [name, e] of categoryMap) {
-    if (e.total === 0) continue;
+    if (e.solved === 0) continue;
     const label = CATEGORY_LABEL[name] || name;
     const d = daysAgo(e.lastSolved);
     if (d !== null && d > 14)
@@ -1247,6 +1255,7 @@ function buildTips(
       tips.push({ text: `It's been ${d} days since you solved a ${label} question. Keep the streak alive!`, priority: "medium" });
   }
   for (const [name, e] of topicMap) {
+    if (e.solved === 0) continue;
     const d = daysAgo(e.lastSolved);
     if (d !== null && d > 14)
       tips.push({ text: `${name} is getting rusty — last practiced ${d} days ago`, priority: "high" });
@@ -1263,18 +1272,41 @@ function buildTips(
   }
 
   // Weakest category
-  let weakest: { name: string; rate: number; pending: number } | null = null;
+  let weakest: { label: string; rate: number; pending: number } | null = null;
   for (const [name, e] of categoryMap) {
     if (e.total === 0) continue;
     const rate = Math.round((e.solved / e.total) * 100);
-    if (rate < 50 && (!weakest || rate < weakest.rate)) weakest = { name, rate, pending: e.pending };
+    const label = CATEGORY_LABEL[name] || name;
+    if (rate < 50 && (!weakest || rate < weakest.rate)) weakest = { label, rate, pending: e.pending };
   }
   if (weakest)
-    tips.push({ text: `${weakest.name} needs attention — ${weakest.pending} unsolved question${weakest.pending === 1 ? "" : "s"} remaining`, priority: "medium" });
+    tips.push({ text: `${weakest.label} needs attention — ${weakest.pending} unsolved question${weakest.pending === 1 ? "" : "s"} remaining`, priority: "medium" });
 
-  // Backlog reminder
-  if (backlogCount > 10)
-    tips.push({ text: `${backlogCount} questions waiting in your backlog — pick one and knock it out!`, priority: "low" });
+  // Backlog tips — gentle nudges to clear pending items
+  if (backlogCount > 0) {
+    const oldestDays = backlogOldestDate ? Math.floor((now.getTime() - backlogOldestDate.getTime()) / 86400000) : 0;
+
+    if (backlogCount >= 20)
+      tips.push({ text: `Your backlog has grown to ${backlogCount} items — consider picking one to tackle today`, priority: "medium" });
+    else if (backlogCount >= 5)
+      tips.push({ text: `${backlogCount} questions in your backlog — a quick session could knock a few out`, priority: "low" });
+    else if (backlogCount > 0)
+      tips.push({ text: `${backlogCount} item${backlogCount === 1 ? "" : "s"} in your backlog — you're almost at zero!`, priority: "low" });
+
+    if (oldestDays > 30)
+      tips.push({ text: `Your oldest backlog item has been waiting ${oldestDays} days — maybe it's time to revisit or remove it`, priority: "low" });
+    else if (oldestDays > 14)
+      tips.push({ text: `Some backlog items are over 2 weeks old — a good time to review what's still relevant`, priority: "low" });
+
+    // Category with most pending in backlog
+    let mostPending: { label: string; count: number } | null = null;
+    for (const [name, e] of categoryMap) {
+      if (e.pending > 0 && (!mostPending || e.pending > mostPending.count))
+        mostPending = { label: CATEGORY_LABEL[name] || name, count: e.pending };
+    }
+    if (mostPending && mostPending.count >= 3)
+      tips.push({ text: `${mostPending.label} has ${mostPending.count} pending questions — a focused session could make a dent`, priority: "low" });
+  }
 
   // Weekly momentum
   let weekSolved = 0;
@@ -1289,9 +1321,10 @@ function buildTips(
   // Close to mastering
   for (const [name, e] of categoryMap) {
     if (e.total === 0 || e.pending === 0) continue;
+    const label = CATEGORY_LABEL[name] || name;
     const rate = Math.round((e.solved / e.total) * 100);
     if (rate > 80)
-      tips.push({ text: `Almost there with ${name} — just ${e.pending} more to master it`, priority: "low" });
+      tips.push({ text: `Almost there with ${label} — just ${e.pending} more to master it`, priority: "low" });
   }
 
   return tips.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]).slice(0, 5);
