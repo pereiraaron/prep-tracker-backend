@@ -1,7 +1,7 @@
 import { Response } from "express";
 import { Question } from "../models/Question";
 import { AuthRequest } from "../types/auth";
-import { PrepCategory } from "../types/category";
+import { PrepCategory, CATEGORY_LABEL } from "../types/category";
 import { QuestionStatus, Difficulty, QuestionSource } from "../types/question";
 import { toISTDateString, toISTMidnight } from "../utils/date";
 import { sendSuccess, sendError } from "../utils/response";
@@ -1239,11 +1239,12 @@ function buildTips(
   // Rusty categories — haven't practiced in a while
   for (const [name, e] of categoryMap) {
     if (e.total === 0) continue;
+    const label = CATEGORY_LABEL[name] || name;
     const d = daysAgo(e.lastSolved);
     if (d !== null && d > 14)
-      tips.push({ text: `${name} is getting rusty — last practiced ${d} days ago. Time for a refresher!`, priority: "high" });
+      tips.push({ text: `${label} is getting rusty — last practiced ${d} days ago. Time for a refresher!`, priority: "high" });
     else if (d !== null && d > 7)
-      tips.push({ text: `It's been ${d} days since you solved a ${name} question. Keep the streak alive!`, priority: "medium" });
+      tips.push({ text: `It's been ${d} days since you solved a ${label} question. Keep the streak alive!`, priority: "medium" });
   }
   for (const [name, e] of topicMap) {
     const d = daysAgo(e.lastSolved);
