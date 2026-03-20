@@ -51,13 +51,9 @@ beforeEach(() => jest.clearAllMocks());
 
 // ---- getOverview ----
 describe("getOverview", () => {
-  it("returns overview with counts by status, category, and difficulty", async () => {
+  it("returns solved-based overview with backlog count", async () => {
     (Question.aggregate as jest.Mock).mockResolvedValueOnce([
       {
-        byStatus: [
-          { _id: QuestionStatus.Pending, count: 5 },
-          { _id: QuestionStatus.Solved, count: 3 },
-        ],
         byCategory: [
           { _id: PrepCategory.DSA, count: 4 },
           { _id: PrepCategory.SystemDesign, count: 2 },
@@ -66,8 +62,8 @@ describe("getOverview", () => {
           { _id: Difficulty.Easy, count: 2 },
           { _id: Difficulty.Hard, count: 1 },
         ],
-        total: [{ count: 8 }],
-        backlog: [{ count: 2 }],
+        totalSolved: [{ count: 6 }],
+        backlog: [{ count: 10 }],
       },
     ]);
 
@@ -76,10 +72,8 @@ describe("getOverview", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0];
-    expect(body.data.total).toBe(8);
-    expect(body.data.backlogCount).toBe(2);
-    expect(body.data.byStatus.pending).toBe(5);
-    expect(body.data.byStatus.solved).toBe(3);
+    expect(body.data.totalSolved).toBe(6);
+    expect(body.data.backlogCount).toBe(10);
     expect(body.data.byCategory.dsa).toBe(4);
     expect(body.data.byDifficulty.easy).toBe(2);
   });
@@ -96,10 +90,9 @@ describe("getOverview", () => {
 
 // ---- getCategoryBreakdown ----
 describe("getCategoryBreakdown", () => {
-  it("returns per-category breakdown with completion rates", async () => {
+  it("returns solved counts per category", async () => {
     (Question.aggregate as jest.Mock).mockResolvedValue([
-      { _id: { category: PrepCategory.DSA, status: QuestionStatus.Solved }, count: 3 },
-      { _id: { category: PrepCategory.DSA, status: QuestionStatus.Pending }, count: 7 },
+      { _id: PrepCategory.DSA, count: 3 },
     ]);
 
     const res = mockRes();
@@ -107,17 +100,15 @@ describe("getCategoryBreakdown", () => {
 
     const body = res.json.mock.calls[0][0].data;
     const dsa = body.find((c: any) => c.category === PrepCategory.DSA);
-    expect(dsa.total).toBe(10);
-    expect(dsa.completionRate).toBe(30);
+    expect(dsa.count).toBe(3);
   });
 });
 
 // ---- getDifficultyBreakdown ----
 describe("getDifficultyBreakdown", () => {
-  it("returns per-difficulty breakdown with completion rates", async () => {
+  it("returns solved counts per difficulty", async () => {
     (Question.aggregate as jest.Mock).mockResolvedValue([
-      { _id: { difficulty: Difficulty.Easy, status: QuestionStatus.Solved }, count: 5 },
-      { _id: { difficulty: Difficulty.Easy, status: QuestionStatus.Pending }, count: 5 },
+      { _id: Difficulty.Easy, count: 5 },
     ]);
 
     const res = mockRes();
@@ -125,8 +116,7 @@ describe("getDifficultyBreakdown", () => {
 
     const body = res.json.mock.calls[0][0].data;
     const easy = body.find((d: any) => d.difficulty === Difficulty.Easy);
-    expect(easy.total).toBe(10);
-    expect(easy.completionRate).toBe(50);
+    expect(easy.count).toBe(5);
   });
 });
 
@@ -157,10 +147,9 @@ describe("getProgress", () => {
 
 // ---- getSourceBreakdown ----
 describe("getSourceBreakdown", () => {
-  it("returns per-source breakdown with completion rates", async () => {
+  it("returns solved counts per source", async () => {
     (Question.aggregate as jest.Mock).mockResolvedValue([
-      { _id: { source: QuestionSource.Leetcode, status: QuestionStatus.Solved }, count: 10 },
-      { _id: { source: QuestionSource.Leetcode, status: QuestionStatus.Pending }, count: 5 },
+      { _id: QuestionSource.Leetcode, count: 10 },
     ]);
 
     const res = mockRes();
@@ -169,19 +158,16 @@ describe("getSourceBreakdown", () => {
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0].data;
     const leetcode = body.find((s: any) => s.source === "leetcode");
-    expect(leetcode.total).toBe(15);
-    expect(leetcode.solved).toBe(10);
-    expect(leetcode.completionRate).toBe(67);
+    expect(leetcode.count).toBe(10);
   });
 });
 
 // ---- getCompanyTagBreakdown ----
 describe("getCompanyTagBreakdown", () => {
-  it("returns per-company breakdown sorted by total", async () => {
+  it("returns solved counts per company sorted by count", async () => {
     (Question.aggregate as jest.Mock).mockResolvedValue([
-      { _id: { companyTag: "Google", status: QuestionStatus.Solved }, count: 5 },
-      { _id: { companyTag: "Google", status: QuestionStatus.Pending }, count: 2 },
-      { _id: { companyTag: "Meta", status: QuestionStatus.Solved }, count: 3 },
+      { _id: "Google", count: 5 },
+      { _id: "Meta", count: 3 },
     ]);
 
     const res = mockRes();
@@ -190,18 +176,18 @@ describe("getCompanyTagBreakdown", () => {
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0].data;
     expect(body[0].companyTag).toBe("Google");
-    expect(body[0].total).toBe(7);
+    expect(body[0].count).toBe(5);
     expect(body[1].companyTag).toBe("Meta");
-    expect(body[1].total).toBe(3);
+    expect(body[1].count).toBe(3);
   });
 });
 
 // ---- getTagBreakdown ----
 describe("getTagBreakdown", () => {
-  it("returns per-tag breakdown sorted by total", async () => {
+  it("returns solved counts per tag sorted by count", async () => {
     (Question.aggregate as jest.Mock).mockResolvedValue([
-      { _id: { tag: "dp", status: QuestionStatus.Solved }, count: 8 },
-      { _id: { tag: "greedy", status: QuestionStatus.Solved }, count: 3 },
+      { _id: "dp", count: 8 },
+      { _id: "greedy", count: 3 },
     ]);
 
     const res = mockRes();
@@ -210,8 +196,7 @@ describe("getTagBreakdown", () => {
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0].data;
     expect(body[0].tag).toBe("dp");
-    expect(body[0].total).toBe(8);
-    expect(body[0].solved).toBe(8);
+    expect(body[0].count).toBe(8);
   });
 });
 
@@ -266,8 +251,8 @@ describe("getCumulativeProgress", () => {
     const body = res.json.mock.calls[0][0].data;
     expect(body.length).toBeGreaterThanOrEqual(7);
     expect(body[0]).toHaveProperty("date");
-    expect(body[0].total).toBe(10); // starts from prior count
-    expect(body[body.length - 1].total).toBe(10); // no new solves
+    expect(body[0].total).toBe(10);
+    expect(body[body.length - 1].total).toBe(10);
   });
 
   it("accumulates daily solves", async () => {
@@ -288,14 +273,13 @@ describe("getCumulativeProgress", () => {
     const body = res.json.mock.calls[0][0].data;
     const entry = body.find((d: any) => d.date === d1Str);
     expect(entry).toBeDefined();
-    // Total should be >= 8 (5 prior + 3 on that day)
     expect(entry.total).toBeGreaterThanOrEqual(8);
   });
 });
 
 // ---- getDifficultyByCategory ----
 describe("getDifficultyByCategory", () => {
-  it("returns difficulty x category cross-tabulation", async () => {
+  it("returns difficulty x category cross-tabulation (solved only)", async () => {
     (Question.aggregate as jest.Mock).mockResolvedValue([
       { _id: { category: PrepCategory.DSA, difficulty: Difficulty.Easy }, count: 5 },
       { _id: { category: PrepCategory.DSA, difficulty: Difficulty.Medium }, count: 10 },
@@ -327,19 +311,23 @@ describe("getDifficultyByCategory", () => {
 
 // ---- getInsights ----
 describe("getInsights", () => {
-  const mockAllEmpty = () => {
-    (Question.aggregate as jest.Mock)
-      .mockResolvedValueOnce([]) // categories
-      .mockResolvedValueOnce([]) // topics
-      .mockResolvedValueOnce([]) // difficulties
-      .mockResolvedValueOnce([]); // daily solves
-    (Question.countDocuments as jest.Mock)
-      .mockResolvedValueOnce(0) // backlog
-      .mockResolvedValueOnce(0); // total solved
+  const mockInsightsFacet = (overrides: Record<string, any> = {}) => {
+    (Question.aggregate as jest.Mock).mockResolvedValueOnce([
+      {
+        catRows: [],
+        topicRows: [],
+        diffRows: [],
+        dailyRows: [],
+        backlogCount: [],
+        backlogOldest: [],
+        totalSolved: [],
+        ...overrides,
+      },
+    ]);
   };
 
   it("returns empty insights for user with no data", async () => {
-    mockAllEmpty();
+    mockInsightsFacet();
 
     const res = mockRes();
     await getInsights(mockReq({ query: { refresh: "true" } }), res);
@@ -351,54 +339,23 @@ describe("getInsights", () => {
     expect(milestones.every((m: any) => !m.achieved)).toBe(true);
   });
 
-  it("identifies weak categories (< 50%, >= 2 total)", async () => {
-    (Question.aggregate as jest.Mock)
-      .mockResolvedValueOnce([
-        { _id: { category: "dsa", status: "solved" }, count: 2, lastSolved: new Date() },
-        { _id: { category: "dsa", status: "pending" }, count: 8, lastSolved: null },
-      ]) // categories: dsa 2/10 = 20%
-      .mockResolvedValueOnce([]) // topics
-      .mockResolvedValueOnce([]) // difficulties
-      .mockResolvedValueOnce([]); // daily
-    (Question.countDocuments as jest.Mock).mockResolvedValueOnce(0).mockResolvedValueOnce(2);
+  it("computes milestones from solved counts", async () => {
+    mockInsightsFacet({
+      catRows: [
+        { _id: "dsa", count: 15, lastSolved: new Date() },
+      ],
+      diffRows: [
+        { _id: "easy", count: 10, lastSolved: new Date() },
+        { _id: "medium", count: 4, lastSolved: new Date() },
+        { _id: "hard", count: 1, lastSolved: new Date() },
+      ],
+      totalSolved: [{ count: 15 }],
+    });
 
     const res = mockRes();
     await getInsights(mockReq({ query: { refresh: "true" } }), res);
 
-    const { weakAreas } = res.json.mock.calls[0][0].data;
-    expect(weakAreas.length).toBeGreaterThan(0);
-    const dsa = weakAreas.find((w: any) => w.name === "dsa");
-    expect(dsa).toBeDefined();
-    expect(dsa.completionRate).toBe(20);
-    expect(dsa.type).toBe("category");
-  });
-
-  it("generates tips and computes milestones", async () => {
-    (Question.aggregate as jest.Mock)
-      .mockResolvedValueOnce([
-        { _id: { category: "dsa", status: "solved" }, count: 15, lastSolved: new Date() },
-        { _id: { category: "dsa", status: "pending" }, count: 5, lastSolved: null },
-      ])
-      .mockResolvedValueOnce([]) // topics
-      .mockResolvedValueOnce([
-        { _id: { difficulty: "easy", status: "solved" }, count: 10, lastSolved: new Date() },
-        { _id: { difficulty: "medium", status: "solved" }, count: 4, lastSolved: new Date() },
-        { _id: { difficulty: "hard", status: "solved" }, count: 1, lastSolved: new Date() },
-      ])
-      .mockResolvedValueOnce([]); // daily
-    (Question.countDocuments as jest.Mock)
-      .mockResolvedValueOnce(15) // backlog > 10
-      .mockResolvedValueOnce(15); // total solved
-
-    const res = mockRes();
-    await getInsights(mockReq({ query: { refresh: "true" } }), res);
-
-    const { tips, milestones } = res.json.mock.calls[0][0].data;
-
-    // Should have backlog tip (15 > 10)
-    expect(tips.some((t: any) => t.text.includes("backlog"))).toBe(true);
-
-    // Milestones
+    const { milestones } = res.json.mock.calls[0][0].data;
     const firstQ = milestones.find((m: any) => m.name === "First Question");
     expect(firstQ.achieved).toBe(true);
     const getting = milestones.find((m: any) => m.name === "Getting Started");
@@ -406,6 +363,19 @@ describe("getInsights", () => {
     const century = milestones.find((m: any) => m.name === "Century");
     expect(century.achieved).toBe(false);
     expect(century.progress).toBe("15/100");
+  });
+
+  it("generates backlog tip when backlog is large", async () => {
+    mockInsightsFacet({
+      backlogCount: [{ count: 25 }],
+      backlogOldest: [{ createdAt: new Date() }],
+    });
+
+    const res = mockRes();
+    await getInsights(mockReq({ query: { refresh: "true" } }), res);
+
+    const { tips } = res.json.mock.calls[0][0].data;
+    expect(tips.some((t: any) => t.text.includes("backlog"))).toBe(true);
   });
 
   it("returns 500 on error", async () => {

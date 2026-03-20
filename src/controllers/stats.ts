@@ -29,27 +29,24 @@ export const getOverview = async (req: AuthRequest, res: Response) => {
       { $match: { userId } },
       {
         $facet: {
-          byStatus: [{ $group: { _id: "$status", count: { $sum: 1 } } }],
-          byCategory: [{ $match: { category: { $ne: null } } }, { $group: { _id: "$category", count: { $sum: 1 } } }],
+          byCategory: [
+            { $match: { category: { $ne: null }, status: QuestionStatus.Solved } },
+            { $group: { _id: "$category", count: { $sum: 1 } } },
+          ],
           byDifficulty: [
-            { $match: { difficulty: { $ne: null } } },
+            { $match: { difficulty: { $ne: null }, status: QuestionStatus.Solved } },
             { $group: { _id: "$difficulty", count: { $sum: 1 } } },
           ],
-          total: [{ $count: "count" }],
+          totalSolved: [{ $match: { status: QuestionStatus.Solved } }, { $count: "count" }],
           backlog: [{ $match: { status: QuestionStatus.Pending } }, { $count: "count" }],
         },
       },
     ]);
 
-    const byStatus = facetResult.byStatus;
     const byCategory = facetResult.byCategory;
     const byDifficulty = facetResult.byDifficulty;
-    const total = facetResult.total[0]?.count ?? 0;
+    const totalSolved = facetResult.totalSolved[0]?.count ?? 0;
     const backlogCount = facetResult.backlog[0]?.count ?? 0;
-
-    const statusMap: Record<string, number> = {};
-    for (const s of Object.values(QuestionStatus)) statusMap[s] = 0;
-    for (const row of byStatus) statusMap[row._id] = row.count;
 
     const categoryMap: Record<string, number> = {};
     for (const c of Object.values(PrepCategory)) categoryMap[c] = 0;
@@ -60,9 +57,8 @@ export const getOverview = async (req: AuthRequest, res: Response) => {
     for (const row of byDifficulty) difficultyMap[row._id] = row.count;
 
     const data = {
-      total,
+      totalSolved,
       backlogCount,
-      byStatus: statusMap,
       byCategory: categoryMap,
       byDifficulty: difficultyMap,
     };
@@ -92,34 +88,24 @@ export const getCategoryBreakdown = async (req: AuthRequest, res: Response) => {
     }
 
     const pipeline = await Question.aggregate([
-      { $match: { userId, category: { $ne: null } } },
+      { $match: { userId, category: { $ne: null }, status: QuestionStatus.Solved } },
       {
         $group: {
-          _id: { category: "$category", status: "$status" },
+          _id: "$category",
           count: { $sum: 1 },
         },
       },
     ]);
 
-    const categories: Record<string, { total: number; solved: number; pending: number }> = {};
-
-    for (const c of Object.values(PrepCategory)) {
-      categories[c] = { total: 0, solved: 0, pending: 0 };
-    }
-
+    const categories: Record<string, number> = {};
+    for (const c of Object.values(PrepCategory)) categories[c] = 0;
     for (const row of pipeline) {
-      const cat = row._id.category;
-      const status = row._id.status as string;
-      if (!categories[cat]) continue;
-      categories[cat].total += row.count;
-      if (status === QuestionStatus.Solved) categories[cat].solved += row.count;
-      else categories[cat].pending += row.count;
+      if (categories[row._id] !== undefined) categories[row._id] = row.count;
     }
 
-    const breakdown = Object.entries(categories).map(([category, stats]) => ({
+    const breakdown = Object.entries(categories).map(([category, count]) => ({
       category,
-      ...stats,
-      completionRate: stats.total > 0 ? Math.round((stats.solved / stats.total) * 100) : 0,
+      count,
     }));
 
     cache.set(cacheKey, breakdown);
@@ -148,34 +134,24 @@ export const getDifficultyBreakdown = async (req: AuthRequest, res: Response) =>
     }
 
     const pipeline = await Question.aggregate([
-      { $match: { userId, difficulty: { $ne: null } } },
+      { $match: { userId, difficulty: { $ne: null }, status: QuestionStatus.Solved } },
       {
         $group: {
-          _id: { difficulty: "$difficulty", status: "$status" },
+          _id: "$difficulty",
           count: { $sum: 1 },
         },
       },
     ]);
 
-    const difficulties: Record<string, { total: number; solved: number; pending: number }> = {};
-
-    for (const d of Object.values(Difficulty)) {
-      difficulties[d] = { total: 0, solved: 0, pending: 0 };
-    }
-
+    const difficulties: Record<string, number> = {};
+    for (const d of Object.values(Difficulty)) difficulties[d] = 0;
     for (const row of pipeline) {
-      const diff = row._id.difficulty;
-      const status = row._id.status as string;
-      if (!difficulties[diff]) continue;
-      difficulties[diff].total += row.count;
-      if (status === QuestionStatus.Solved) difficulties[diff].solved += row.count;
-      else difficulties[diff].pending += row.count;
+      if (difficulties[row._id] !== undefined) difficulties[row._id] = row.count;
     }
 
-    const breakdown = Object.entries(difficulties).map(([difficulty, stats]) => ({
+    const breakdown = Object.entries(difficulties).map(([difficulty, count]) => ({
       difficulty,
-      ...stats,
-      completionRate: stats.total > 0 ? Math.round((stats.solved / stats.total) * 100) : 0,
+      count,
     }));
 
     cache.set(cacheKey, breakdown);
@@ -203,36 +179,24 @@ export const getTopicBreakdown = async (req: AuthRequest, res: Response) => {
       matchFilter.category = req.query.category as string;
     }
 
+    matchFilter.status = QuestionStatus.Solved;
+
     const pipeline = await Question.aggregate([
       { $match: matchFilter },
       {
         $group: {
-          _id: { topic: "$topic", status: "$status" },
+          _id: "$topic",
           count: { $sum: 1 },
         },
       },
     ]);
 
-    const topics: Record<string, { total: number; solved: number; pending: number }> = {};
-
-    for (const row of pipeline) {
-      const topic = row._id.topic as string;
-      const status = row._id.status as string;
-      if (!topics[topic]) {
-        topics[topic] = { total: 0, solved: 0, pending: 0 };
-      }
-      topics[topic].total += row.count;
-      if (status === QuestionStatus.Solved) topics[topic].solved += row.count;
-      else topics[topic].pending += row.count;
-    }
-
-    const breakdown = Object.entries(topics)
-      .map(([topic, stats]) => ({
-        topic,
-        ...stats,
-        completionRate: stats.total > 0 ? Math.round((stats.solved / stats.total) * 100) : 0,
+    const breakdown = pipeline
+      .map((row) => ({
+        topic: row._id as string,
+        count: row.count as number,
       }))
-      .sort((a, b) => b.total - a.total);
+      .sort((a, b) => b.count - a.count);
 
     sendSuccess(res, breakdown);
   } catch (error) {
@@ -365,33 +329,24 @@ export const getSourceBreakdown = async (req: AuthRequest, res: Response) => {
     const userId = req.user?.id;
 
     const pipeline = await Question.aggregate([
-      { $match: { userId, source: { $nin: [null, ""] } } },
+      { $match: { userId, source: { $nin: [null, ""] }, status: QuestionStatus.Solved } },
       {
         $group: {
-          _id: { source: "$source", status: "$status" },
+          _id: "$source",
           count: { $sum: 1 },
         },
       },
     ]);
 
-    const sources: Record<string, { total: number; solved: number; pending: number }> = {};
-    for (const s of Object.values(QuestionSource)) {
-      sources[s] = { total: 0, solved: 0, pending: 0 };
-    }
-
+    const sources: Record<string, number> = {};
+    for (const s of Object.values(QuestionSource)) sources[s] = 0;
     for (const row of pipeline) {
-      const src = row._id.source;
-      const status = row._id.status as string;
-      if (!sources[src]) continue;
-      sources[src].total += row.count;
-      if (status === QuestionStatus.Solved) sources[src].solved += row.count;
-      else sources[src].pending += row.count;
+      if (sources[row._id] !== undefined) sources[row._id] = row.count;
     }
 
-    const breakdown = Object.entries(sources).map(([source, stats]) => ({
+    const breakdown = Object.entries(sources).map(([source, count]) => ({
       source,
-      ...stats,
-      completionRate: stats.total > 0 ? Math.round((stats.solved / stats.total) * 100) : 0,
+      count,
     }));
 
     sendSuccess(res, breakdown);
@@ -410,36 +365,22 @@ export const getCompanyTagBreakdown = async (req: AuthRequest, res: Response) =>
     const userId = req.user?.id;
 
     const pipeline = await Question.aggregate([
-      { $match: { userId, companyTags: { $exists: true, $ne: [] } } },
+      { $match: { userId, companyTags: { $exists: true, $ne: [] }, status: QuestionStatus.Solved } },
       { $unwind: "$companyTags" },
       {
         $group: {
-          _id: { companyTag: "$companyTags", status: "$status" },
+          _id: "$companyTags",
           count: { $sum: 1 },
         },
       },
     ]);
 
-    const companies: Record<string, { total: number; solved: number; pending: number }> = {};
-
-    for (const row of pipeline) {
-      const company = row._id.companyTag as string;
-      const status = row._id.status as string;
-      if (!companies[company]) {
-        companies[company] = { total: 0, solved: 0, pending: 0 };
-      }
-      companies[company].total += row.count;
-      if (status === QuestionStatus.Solved) companies[company].solved += row.count;
-      else companies[company].pending += row.count;
-    }
-
-    const breakdown = Object.entries(companies)
-      .map(([companyTag, stats]) => ({
-        companyTag,
-        ...stats,
-        completionRate: stats.total > 0 ? Math.round((stats.solved / stats.total) * 100) : 0,
+    const breakdown = pipeline
+      .map((row) => ({
+        companyTag: row._id as string,
+        count: row.count as number,
       }))
-      .sort((a, b) => b.total - a.total);
+      .sort((a, b) => b.count - a.count);
 
     sendSuccess(res, breakdown);
   } catch (error) {
@@ -457,36 +398,22 @@ export const getTagBreakdown = async (req: AuthRequest, res: Response) => {
     const userId = req.user?.id;
 
     const pipeline = await Question.aggregate([
-      { $match: { userId, tags: { $exists: true, $ne: [] } } },
+      { $match: { userId, tags: { $exists: true, $ne: [] }, status: QuestionStatus.Solved } },
       { $unwind: "$tags" },
       {
         $group: {
-          _id: { tag: "$tags", status: "$status" },
+          _id: "$tags",
           count: { $sum: 1 },
         },
       },
     ]);
 
-    const tags: Record<string, { total: number; solved: number; pending: number }> = {};
-
-    for (const row of pipeline) {
-      const tag = row._id.tag as string;
-      const status = row._id.status as string;
-      if (!tags[tag]) {
-        tags[tag] = { total: 0, solved: 0, pending: 0 };
-      }
-      tags[tag].total += row.count;
-      if (status === QuestionStatus.Solved) tags[tag].solved += row.count;
-      else tags[tag].pending += row.count;
-    }
-
-    const breakdown = Object.entries(tags)
-      .map(([tag, stats]) => ({
-        tag,
-        ...stats,
-        completionRate: stats.total > 0 ? Math.round((stats.solved / stats.total) * 100) : 0,
+    const breakdown = pipeline
+      .map((row) => ({
+        tag: row._id as string,
+        count: row.count as number,
       }))
-      .sort((a, b) => b.total - a.total);
+      .sort((a, b) => b.count - a.count);
 
     sendSuccess(res, breakdown);
   } catch (error) {
@@ -669,7 +596,7 @@ export const getDifficultyByCategory = async (req: AuthRequest, res: Response) =
     const userId = req.user?.id;
 
     const pipeline = await Question.aggregate([
-      { $match: { userId, category: { $ne: null }, difficulty: { $ne: null } } },
+      { $match: { userId, category: { $ne: null }, difficulty: { $ne: null }, status: QuestionStatus.Solved } },
       {
         $group: {
           _id: { category: "$category", difficulty: "$difficulty" },
@@ -733,18 +660,19 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
           { $match: { userId } },
           {
             $facet: {
-              byStatus: [{ $group: { _id: "$status", count: { $sum: 1 } } }],
-              byCategory: [{ $match: { category: { $ne: null } } }, { $group: { _id: "$category", count: { $sum: 1 } } }],
-              byDifficulty: [{ $match: { difficulty: { $ne: null } } }, { $group: { _id: "$difficulty", count: { $sum: 1 } } }],
-              total: [{ $count: "count" }],
+              byCategory: [
+                { $match: { category: { $ne: null }, status: QuestionStatus.Solved } },
+                { $group: { _id: "$category", count: { $sum: 1 } } },
+              ],
+              byDifficulty: [
+                { $match: { difficulty: { $ne: null }, status: QuestionStatus.Solved } },
+                { $group: { _id: "$difficulty", count: { $sum: 1 } } },
+              ],
+              totalSolved: [{ $match: { status: QuestionStatus.Solved } }, { $count: "count" }],
               backlog: [{ $match: { status: QuestionStatus.Pending } }, { $count: "count" }],
             },
           },
         ]);
-
-        const statusMap: Record<string, number> = {};
-        for (const s of Object.values(QuestionStatus)) statusMap[s] = 0;
-        for (const row of facetResult.byStatus) statusMap[row._id] = row.count;
 
         const categoryMap: Record<string, number> = {};
         for (const c of Object.values(PrepCategory)) categoryMap[c] = 0;
@@ -755,9 +683,8 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
         for (const row of facetResult.byDifficulty) difficultyMap[row._id] = row.count;
 
         const data = {
-          total: facetResult.total[0]?.count ?? 0,
+          totalSolved: facetResult.totalSolved[0]?.count ?? 0,
           backlogCount: facetResult.backlog[0]?.count ?? 0,
-          byStatus: statusMap,
           byCategory: categoryMap,
           byDifficulty: difficultyMap,
         };
@@ -773,21 +700,15 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
         if (cached) return cached;
 
         const pipeline = await Question.aggregate([
-          { $match: { userId, category: { $ne: null } } },
-          { $group: { _id: { category: "$category", status: "$status" }, count: { $sum: 1 } } },
+          { $match: { userId, category: { $ne: null }, status: QuestionStatus.Solved } },
+          { $group: { _id: "$category", count: { $sum: 1 } } },
         ]);
-        const categories: Record<string, { total: number; solved: number; pending: number }> = {};
-        for (const c of Object.values(PrepCategory)) categories[c] = { total: 0, solved: 0, pending: 0 };
+        const categories: Record<string, number> = {};
+        for (const c of Object.values(PrepCategory)) categories[c] = 0;
         for (const row of pipeline) {
-          const cat = row._id.category;
-          if (!categories[cat]) continue;
-          categories[cat].total += row.count;
-          if (row._id.status === QuestionStatus.Solved) categories[cat].solved += row.count;
-          else categories[cat].pending += row.count;
+          if (categories[row._id] !== undefined) categories[row._id] = row.count;
         }
-        const breakdown = Object.entries(categories).map(([category, stats]) => ({
-          category, ...stats, completionRate: stats.total > 0 ? Math.round((stats.solved / stats.total) * 100) : 0,
-        }));
+        const breakdown = Object.entries(categories).map(([category, count]) => ({ category, count }));
         cache.set(cacheKey, breakdown);
         return breakdown;
       };
@@ -800,21 +721,15 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
         if (cached) return cached;
 
         const pipeline = await Question.aggregate([
-          { $match: { userId, difficulty: { $ne: null } } },
-          { $group: { _id: { difficulty: "$difficulty", status: "$status" }, count: { $sum: 1 } } },
+          { $match: { userId, difficulty: { $ne: null }, status: QuestionStatus.Solved } },
+          { $group: { _id: "$difficulty", count: { $sum: 1 } } },
         ]);
-        const difficulties: Record<string, { total: number; solved: number; pending: number }> = {};
-        for (const d of Object.values(Difficulty)) difficulties[d] = { total: 0, solved: 0, pending: 0 };
+        const difficulties: Record<string, number> = {};
+        for (const d of Object.values(Difficulty)) difficulties[d] = 0;
         for (const row of pipeline) {
-          const diff = row._id.difficulty;
-          if (!difficulties[diff]) continue;
-          difficulties[diff].total += row.count;
-          if (row._id.status === QuestionStatus.Solved) difficulties[diff].solved += row.count;
-          else difficulties[diff].pending += row.count;
+          if (difficulties[row._id] !== undefined) difficulties[row._id] = row.count;
         }
-        const breakdown = Object.entries(difficulties).map(([difficulty, stats]) => ({
-          difficulty, ...stats, completionRate: stats.total > 0 ? Math.round((stats.solved / stats.total) * 100) : 0,
-        }));
+        const breakdown = Object.entries(difficulties).map(([difficulty, count]) => ({ difficulty, count }));
         cache.set(cacheKey, breakdown);
         return breakdown;
       };
@@ -915,62 +830,40 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
     if (shouldInclude("topics")) {
       tasks.topics = async () => {
         const pipeline = await Question.aggregate([
-          { $match: { userId, topic: { $nin: [null, ""] } } },
-          { $group: { _id: { topic: "$topic", status: "$status" }, count: { $sum: 1 } } },
+          { $match: { userId, topic: { $nin: [null, ""] }, status: QuestionStatus.Solved } },
+          { $group: { _id: "$topic", count: { $sum: 1 } } },
         ]);
-        const topics: Record<string, { total: number; solved: number; pending: number }> = {};
-        for (const row of pipeline) {
-          const topic = row._id.topic as string;
-          if (!topics[topic]) topics[topic] = { total: 0, solved: 0, pending: 0 };
-          topics[topic].total += row.count;
-          if (row._id.status === QuestionStatus.Solved) topics[topic].solved += row.count;
-          else topics[topic].pending += row.count;
-        }
-        return Object.entries(topics)
-          .map(([topic, stats]) => ({ topic, ...stats, completionRate: stats.total > 0 ? Math.round((stats.solved / stats.total) * 100) : 0 }))
-          .sort((a, b) => b.total - a.total);
+        return pipeline
+          .map((row) => ({ topic: row._id as string, count: row.count as number }))
+          .sort((a, b) => b.count - a.count);
       };
     }
 
     if (shouldInclude("sources")) {
       tasks.sources = async () => {
         const pipeline = await Question.aggregate([
-          { $match: { userId, source: { $nin: [null, ""] } } },
-          { $group: { _id: { source: "$source", status: "$status" }, count: { $sum: 1 } } },
+          { $match: { userId, source: { $nin: [null, ""] }, status: QuestionStatus.Solved } },
+          { $group: { _id: "$source", count: { $sum: 1 } } },
         ]);
-        const sources: Record<string, { total: number; solved: number; pending: number }> = {};
-        for (const s of Object.values(QuestionSource)) sources[s] = { total: 0, solved: 0, pending: 0 };
+        const sources: Record<string, number> = {};
+        for (const s of Object.values(QuestionSource)) sources[s] = 0;
         for (const row of pipeline) {
-          const src = row._id.source;
-          if (!sources[src]) continue;
-          sources[src].total += row.count;
-          if (row._id.status === QuestionStatus.Solved) sources[src].solved += row.count;
-          else sources[src].pending += row.count;
+          if (sources[row._id] !== undefined) sources[row._id] = row.count;
         }
-        return Object.entries(sources).map(([source, stats]) => ({
-          source, ...stats, completionRate: stats.total > 0 ? Math.round((stats.solved / stats.total) * 100) : 0,
-        }));
+        return Object.entries(sources).map(([source, count]) => ({ source, count }));
       };
     }
 
     if (shouldInclude("companyTags")) {
       tasks.companyTags = async () => {
         const pipeline = await Question.aggregate([
-          { $match: { userId, companyTags: { $exists: true, $ne: [] } } },
+          { $match: { userId, companyTags: { $exists: true, $ne: [] }, status: QuestionStatus.Solved } },
           { $unwind: "$companyTags" },
-          { $group: { _id: { companyTag: "$companyTags", status: "$status" }, count: { $sum: 1 } } },
+          { $group: { _id: "$companyTags", count: { $sum: 1 } } },
         ]);
-        const companies: Record<string, { total: number; solved: number; pending: number }> = {};
-        for (const row of pipeline) {
-          const company = row._id.companyTag as string;
-          if (!companies[company]) companies[company] = { total: 0, solved: 0, pending: 0 };
-          companies[company].total += row.count;
-          if (row._id.status === QuestionStatus.Solved) companies[company].solved += row.count;
-          else companies[company].pending += row.count;
-        }
-        return Object.entries(companies)
-          .map(([companyTag, stats]) => ({ companyTag, ...stats, completionRate: stats.total > 0 ? Math.round((stats.solved / stats.total) * 100) : 0 }))
-          .sort((a, b) => b.total - a.total);
+        return pipeline
+          .map((row) => ({ companyTag: row._id as string, count: row.count as number }))
+          .sort((a, b) => b.count - a.count);
       };
     }
 
@@ -998,7 +891,7 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
     if (shouldInclude("difficultyByCategory")) {
       tasks.difficultyByCategory = async () => {
         const pipeline = await Question.aggregate([
-          { $match: { userId, category: { $ne: null }, difficulty: { $ne: null } } },
+          { $match: { userId, category: { $ne: null }, difficulty: { $ne: null }, status: QuestionStatus.Solved } },
           { $group: { _id: { category: "$category", difficulty: "$difficulty" }, count: { $sum: 1 } } },
         ]);
         const categories: Record<string, { easy: number; medium: number; hard: number }> = {};
@@ -1072,18 +965,14 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
 // ---- Insights ----
 
 interface DimensionEntry {
-  total: number;
-  solved: number;
-  pending: number;
+  count: number;
   lastSolved: Date | null;
 }
 
 interface WeakAreaItem {
   type: "category" | "topic" | "difficulty";
   name: string;
-  total: number;
-  solved: number;
-  completionRate: number;
+  count: number;
   lastSolvedDaysAgo: number | null;
 }
 
@@ -1106,11 +995,11 @@ const fetchInsightsData = async (userId: string) => {
   const sixtyDaysAgo = toISTMidnight(new Date());
   sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
 
-  const dimGroup = (dimKey: string) => ({
+  const solvedDimGroup = (dimKey: string) => ({
     $group: {
-      _id: { [dimKey]: `$${dimKey}`, status: "$status" },
+      _id: `$${dimKey}`,
       count: { $sum: 1 },
-      lastSolved: { $max: { $cond: [{ $eq: ["$status", QuestionStatus.Solved] }, "$solvedAt", null] } },
+      lastSolved: { $max: "$solvedAt" },
     },
   });
 
@@ -1118,9 +1007,18 @@ const fetchInsightsData = async (userId: string) => {
     { $match: { userId } },
     {
       $facet: {
-        catRows: [{ $match: { category: { $ne: null } } }, dimGroup("category")],
-        topicRows: [{ $match: { topic: { $nin: [null, ""] } } }, dimGroup("topic")],
-        diffRows: [{ $match: { difficulty: { $ne: null } } }, dimGroup("difficulty")],
+        catRows: [
+          { $match: { category: { $ne: null }, status: QuestionStatus.Solved } },
+          solvedDimGroup("category"),
+        ],
+        topicRows: [
+          { $match: { topic: { $nin: [null, ""] }, status: QuestionStatus.Solved } },
+          solvedDimGroup("topic"),
+        ],
+        diffRows: [
+          { $match: { difficulty: { $ne: null }, status: QuestionStatus.Solved } },
+          solvedDimGroup("difficulty"),
+        ],
         dailyRows: [
           { $match: { status: QuestionStatus.Solved, solvedAt: { $gte: sixtyDaysAgo } } },
           { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt" } }, count: { $sum: 1 } } },
@@ -1138,9 +1036,9 @@ const fetchInsightsData = async (userId: string) => {
     },
   ]);
 
-  const categoryMap = reduceByDimension(facetResult.catRows, "category", Object.values(PrepCategory));
-  const topicMap = reduceByDimension(facetResult.topicRows, "topic");
-  const difficultyMap = reduceByDimension(facetResult.diffRows, "difficulty", Object.values(Difficulty));
+  const categoryMap = reduceByDimension(facetResult.catRows, Object.values(PrepCategory));
+  const topicMap = reduceByDimension(facetResult.topicRows);
+  const difficultyMap = reduceByDimension(facetResult.diffRows, Object.values(Difficulty));
   const dailySolvesMap = new Map<string, number>(facetResult.dailyRows.map((r: any) => [r._id, r.count]));
   const backlogCount = facetResult.backlogCount[0]?.count ?? 0;
   const backlogOldestDate: Date | null = facetResult.backlogOldest[0]?.createdAt ?? null;
@@ -1153,23 +1051,18 @@ const fetchInsightsData = async (userId: string) => {
   };
 };
 
-function reduceByDimension(rows: any[], dimKey: string, initKeys?: string[]): Map<string, DimensionEntry> {
+function reduceByDimension(rows: any[], initKeys?: string[]): Map<string, DimensionEntry> {
   const map = new Map<string, DimensionEntry>();
   if (initKeys) {
-    for (const key of initKeys) map.set(key, { total: 0, solved: 0, pending: 0, lastSolved: null });
+    for (const key of initKeys) map.set(key, { count: 0, lastSolved: null });
   }
   for (const row of rows) {
-    const name = row._id[dimKey] as string;
-    if (!map.has(name)) map.set(name, { total: 0, solved: 0, pending: 0, lastSolved: null });
+    const name = row._id as string;
+    if (!map.has(name)) map.set(name, { count: 0, lastSolved: null });
     const entry = map.get(name)!;
-    entry.total += row.count;
-    if (row._id.status === QuestionStatus.Solved) {
-      entry.solved += row.count;
-      if (row.lastSolved && (!entry.lastSolved || row.lastSolved > entry.lastSolved)) {
-        entry.lastSolved = row.lastSolved;
-      }
-    } else {
-      entry.pending += row.count;
+    entry.count += row.count;
+    if (row.lastSolved && (!entry.lastSolved || row.lastSolved > entry.lastSolved)) {
+      entry.lastSolved = row.lastSolved;
     }
   }
   return map;
@@ -1183,52 +1076,51 @@ function buildWeakAreas(
 ): WeakAreaItem[] {
   const items: WeakAreaItem[] = [];
   const daysAgo = (d: Date | null) => (d ? Math.floor((now.getTime() - d.getTime()) / 86400000) : null);
+  const totalSolved = [...categoryMap.values()].reduce((s, e) => s + e.count, 0);
+  if (totalSolved === 0) return [];
 
+  // Categories with few solves or rusty (haven't practiced recently)
   for (const [name, e] of categoryMap) {
-    if (e.total < 2) continue;
-    const rate = Math.round((e.solved / e.total) * 100);
     const lastDays = daysAgo(e.lastSolved);
-    if (rate < 50 || (lastDays !== null && lastDays > 14 && e.pending > 0)) {
+    if (e.count === 0 || (lastDays !== null && lastDays > 14)) {
       items.push({
         type: "category",
         name: CATEGORY_LABEL[name] || name,
-        total: e.total,
-        solved: e.solved,
-        completionRate: rate,
+        count: e.count,
         lastSolvedDaysAgo: lastDays,
       });
     }
   }
-  for (const [name, e] of topicMap) {
-    if (e.total < 3) continue;
-    const rate = Math.round((e.solved / e.total) * 100);
-    if (rate < 50) {
-      items.push({
-        type: "topic",
-        name,
-        total: e.total,
-        solved: e.solved,
-        completionRate: rate,
-        lastSolvedDaysAgo: daysAgo(e.lastSolved),
-      });
+
+  // Topics with few solves relative to others
+  const topicEntries = [...topicMap.entries()].filter(([_, e]) => e.count > 0);
+  if (topicEntries.length > 0) {
+    const avgTopicCount = topicEntries.reduce((s, [_, e]) => s + e.count, 0) / topicEntries.length;
+    for (const [name, e] of topicEntries) {
+      if (e.count < avgTopicCount * 0.5 && e.count >= 1) {
+        items.push({
+          type: "topic",
+          name,
+          count: e.count,
+          lastSolvedDaysAgo: daysAgo(e.lastSolved),
+        });
+      }
     }
   }
+
+  // Difficulty imbalance — flag if a difficulty has very few solves
   for (const [name, e] of difficultyMap) {
-    if (e.total === 0) continue;
-    const rate = Math.round((e.solved / e.total) * 100);
-    if (rate < 30) {
+    if (e.count === 0 && totalSolved > 5) {
       items.push({
         type: "difficulty",
         name,
-        total: e.total,
-        solved: e.solved,
-        completionRate: rate,
+        count: e.count,
         lastSolvedDaysAgo: daysAgo(e.lastSolved),
       });
     }
   }
 
-  return items.sort((a, b) => a.completionRate - b.completionRate).slice(0, 5);
+  return items.sort((a, b) => a.count - b.count).slice(0, 5);
 }
 
 function buildTips(
@@ -1246,7 +1138,7 @@ function buildTips(
 
   // Rusty categories — haven't practiced in a while (only if at least 1 solved)
   for (const [name, e] of categoryMap) {
-    if (e.solved === 0) continue;
+    if (e.count === 0) continue;
     const label = CATEGORY_LABEL[name] || name;
     const d = daysAgo(e.lastSolved);
     if (d !== null && d > 14)
@@ -1255,15 +1147,15 @@ function buildTips(
       tips.push({ text: `It's been ${d} days since you solved a ${label} question. Keep the streak alive!`, priority: "medium" });
   }
   for (const [name, e] of topicMap) {
-    if (e.solved === 0) continue;
+    if (e.count === 0) continue;
     const d = daysAgo(e.lastSolved);
     if (d !== null && d > 14)
       tips.push({ text: `${name} is getting rusty — last practiced ${d} days ago`, priority: "high" });
   }
 
   // Difficulty balance
-  const totalSolvedAll = [...difficultyMap.values()].reduce((s, e) => s + e.solved, 0);
-  const hardSolved = difficultyMap.get(Difficulty.Hard)?.solved ?? 0;
+  const totalSolvedAll = [...difficultyMap.values()].reduce((s, e) => s + e.count, 0);
+  const hardSolved = difficultyMap.get(Difficulty.Hard)?.count ?? 0;
   if (totalSolvedAll > 0 && hardSolved / totalSolvedAll < 0.15) {
     if (hardSolved === 0)
       tips.push({ text: `No Hard problems solved yet — try one to level up your problem-solving skills`, priority: "medium" });
@@ -1271,16 +1163,17 @@ function buildTips(
       tips.push({ text: `Only ${hardSolved} of your ${totalSolvedAll} solves are Hard — mix in a few more to build confidence`, priority: "medium" });
   }
 
-  // Weakest category
-  let weakest: { label: string; rate: number; pending: number } | null = null;
-  for (const [name, e] of categoryMap) {
-    if (e.total === 0) continue;
-    const rate = Math.round((e.solved / e.total) * 100);
-    const label = CATEGORY_LABEL[name] || name;
-    if (rate < 50 && (!weakest || rate < weakest.rate)) weakest = { label, rate, pending: e.pending };
+  // Category with fewest solves (only if user has solved something overall)
+  const totalSolvedAll2 = [...categoryMap.values()].reduce((s, e) => s + e.count, 0);
+  if (totalSolvedAll2 > 0) {
+    let weakest: { label: string; count: number } | null = null;
+    for (const [name, e] of categoryMap) {
+      const label = CATEGORY_LABEL[name] || name;
+      if (!weakest || e.count < weakest.count) weakest = { label, count: e.count };
+    }
+    if (weakest && weakest.count === 0)
+      tips.push({ text: `${weakest.label} needs attention — no questions solved yet`, priority: "medium" });
   }
-  if (weakest)
-    tips.push({ text: `${weakest.label} needs attention — ${weakest.pending} unsolved question${weakest.pending === 1 ? "" : "s"} remaining`, priority: "medium" });
 
   // Backlog tips — gentle nudges to clear pending items
   if (backlogCount > 0) {
@@ -1297,15 +1190,6 @@ function buildTips(
       tips.push({ text: `Your oldest backlog item has been waiting ${oldestDays} days — maybe it's time to revisit or remove it`, priority: "low" });
     else if (oldestDays > 14)
       tips.push({ text: `Some backlog items are over 2 weeks old — a good time to review what's still relevant`, priority: "low" });
-
-    // Category with most pending in backlog
-    let mostPending: { label: string; count: number } | null = null;
-    for (const [name, e] of categoryMap) {
-      if (e.pending > 0 && (!mostPending || e.pending > mostPending.count))
-        mostPending = { label: CATEGORY_LABEL[name] || name, count: e.pending };
-    }
-    if (mostPending && mostPending.count >= 3)
-      tips.push({ text: `${mostPending.label} has ${mostPending.count} pending questions — a focused session could make a dent`, priority: "low" });
   }
 
   // Weekly momentum
@@ -1317,15 +1201,6 @@ function buildTips(
   }
   if (weekSolved >= 5)
     tips.push({ text: `${weekSolved} questions solved this week — you're on fire! Keep it going`, priority: "low" });
-
-  // Close to mastering
-  for (const [name, e] of categoryMap) {
-    if (e.total === 0 || e.pending === 0) continue;
-    const label = CATEGORY_LABEL[name] || name;
-    const rate = Math.round((e.solved / e.total) * 100);
-    if (rate > 80)
-      tips.push({ text: `Almost there with ${label} — just ${e.pending} more to master it`, priority: "low" });
-  }
 
   return tips.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]).slice(0, 5);
 }
@@ -1344,17 +1219,17 @@ function buildMilestones(
   m("Half Century", totalSolved >= 50, `${Math.min(totalSolved, 50)}/50`);
   m("Century", totalSolved >= 100, `${Math.min(totalSolved, 100)}/100`);
 
-  const hardSolved = difficultyMap.get(Difficulty.Hard)?.solved ?? 0;
+  const hardSolved = difficultyMap.get(Difficulty.Hard)?.count ?? 0;
   m("First Hard", hardSolved >= 1, `${Math.min(hardSolved, 1)}/1`);
   m("Hard Grinder", hardSolved >= 10, `${Math.min(hardSolved, 10)}/10`);
 
-  const catsWithSolves = [...categoryMap.entries()].filter(([_, v]) => v.solved > 0).length;
-  const catsWithQuestions = [...categoryMap.entries()].filter(([_, v]) => v.total > 0).length;
+  const catsWithSolves = [...categoryMap.entries()].filter(([_, v]) => v.count > 0).length;
+  const totalCats = categoryMap.size;
   m("Category Explorer", catsWithSolves >= 3, `${Math.min(catsWithSolves, 3)}/3`);
   m(
     "Well Rounded",
-    catsWithQuestions > 0 && catsWithSolves >= catsWithQuestions,
-    `${catsWithSolves}/${catsWithQuestions}`
+    totalCats > 0 && catsWithSolves >= totalCats,
+    `${catsWithSolves}/${totalCats}`
   );
 
   // Streak detection — walk backward from today
