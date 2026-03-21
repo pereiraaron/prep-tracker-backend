@@ -36,6 +36,7 @@ export interface IQuestion extends Document {
   tags: string[];
   companyTags: string[];
   starred: boolean;
+  templates?: Map<string, string>;
   solvedAt?: Date;
   createdAt: Date;
   updatedAt: Date;

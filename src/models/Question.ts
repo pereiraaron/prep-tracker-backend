@@ -66,6 +66,10 @@ const questionSchema = new Schema<IQuestion>(
       $type: Boolean,
       default: false,
     },
+    templates: {
+      $type: Map,
+      of: String,
+    },
     solvedAt: {
       $type: Date,
     },

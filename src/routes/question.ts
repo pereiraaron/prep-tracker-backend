@@ -22,6 +22,8 @@ import {
   createBacklogQuestion,
   getBacklogQuestions,
 } from "../controllers/question";
+import { getTemplates, getSubmission, saveSubmission } from "../controllers/submission";
+import { saveSubmissionSchema } from "../validators/submission";
 
 const router = Router();
 
@@ -34,6 +36,12 @@ router
   .post(authenticate, validate(createBacklogQuestionSchema), createBacklogQuestion);
 
 router.route("/").get(authenticate, getAllQuestions).post(authenticate, validate(createQuestionSchema), createQuestion);
+
+router.get("/:id/templates", authenticate, getTemplates);
+router
+  .route("/:id/submission")
+  .get(authenticate, getSubmission)
+  .put(authenticate, validate(saveSubmissionSchema), saveSubmission);
 
 router.patch("/:id/solve", authenticate, validate(solveQuestionSchema), solveQuestion);
 router.patch("/:id/reset", authenticate, resetQuestion);
