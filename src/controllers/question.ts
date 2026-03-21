@@ -134,7 +134,13 @@ export const updateQuestion = async (req: AuthRequest, res: Response) => {
 
     if (title !== undefined) question.title = title;
     if (notes !== undefined) question.notes = notes;
-    if (solution !== undefined) question.solution = solution;
+    if (solution !== undefined) {
+      question.solution = solution;
+      if (solution && question.status === QuestionStatus.Pending) {
+        question.status = QuestionStatus.Solved;
+        question.solvedAt = new Date();
+      }
+    }
     if (difficulty !== undefined) question.difficulty = difficulty;
     if (topic !== undefined) question.topic = topic;
     if (source !== undefined) question.source = source;
