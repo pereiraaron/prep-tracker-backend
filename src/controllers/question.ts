@@ -6,6 +6,9 @@ import { sendSuccess, sendPaginated, sendError } from "../utils/response";
 import { logger } from "../utils/logger";
 import { cache } from "../utils/cache";
 
+// Exclude heavy fields from list queries (solution/notes can be 50KB each)
+const LIST_PROJECTION = { solution: 0, notes: 0, templates: 0 } as const;
+
 // ---- CRUD ----
 
 export const createQuestion = async (req: AuthRequest, res: Response) => {
@@ -13,7 +16,7 @@ export const createQuestion = async (req: AuthRequest, res: Response) => {
     const userId = req.user?.id;
     const { title, notes, solution, difficulty, topic, source, url, tags, companyTags, category } = req.body;
 
-    const question = await Question.create({
+    const doc = await Question.create({
       userId,
       category,
       title,
@@ -30,7 +33,7 @@ export const createQuestion = async (req: AuthRequest, res: Response) => {
     });
 
     cache.invalidate(`stats:${userId}`);
-    sendSuccess(res, question, 201);
+    sendSuccess(res, doc.toObject(), 201);
   } catch (error) {
     logger.error((error as Error).message);
     sendError(res, "Error creating question");
@@ -93,7 +96,7 @@ export const getAllQuestions = async (req: AuthRequest, res: Response) => {
     const skip = (page - 1) * limit;
 
     const [questions, total] = await Promise.all([
-      Question.find(filter).sort(sort).skip(skip).limit(limit).lean(),
+      Question.find(filter, LIST_PROJECTION).sort(sort).skip(skip).limit(limit).lean(),
       Question.countDocuments(filter),
     ]);
 
@@ -126,30 +129,41 @@ export const updateQuestion = async (req: AuthRequest, res: Response) => {
     const userId = req.user?.id;
     const { title, notes, solution, difficulty, topic, source, url, tags, companyTags, category } = req.body;
 
-    const question = await Question.findOne({ _id: req.params.id, userId });
+    const $set: Record<string, any> = {};
+    if (title !== undefined) $set.title = title;
+    if (notes !== undefined) $set.notes = notes;
+    if (solution !== undefined) $set.solution = solution;
+    if (difficulty !== undefined) $set.difficulty = difficulty;
+    if (topic !== undefined) $set.topic = topic;
+    if (source !== undefined) $set.source = source;
+    if (url !== undefined) $set.url = url;
+    if (tags !== undefined) $set.tags = tags;
+    if (companyTags !== undefined) $set.companyTags = companyTags;
+    if (category !== undefined) $set.category = category;
+
+    // Auto-solve if solution is added to a pending question
+    if (solution) {
+      $set.status = QuestionStatus.Solved;
+      $set.solvedAt = { $ifNull: ["$solvedAt", new Date()] };
+    }
+
+    // Use aggregation pipeline update for conditional solvedAt
+    const question = solution
+      ? await Question.findOneAndUpdate(
+          { _id: req.params.id, userId },
+          [{ $set }],
+          { new: true }
+        ).lean()
+      : await Question.findOneAndUpdate(
+          { _id: req.params.id, userId },
+          { $set },
+          { new: true }
+        ).lean();
+
     if (!question) {
       sendError(res, "Question not found", 404);
       return;
     }
-
-    if (title !== undefined) question.title = title;
-    if (notes !== undefined) question.notes = notes;
-    if (solution !== undefined) {
-      question.solution = solution;
-      if (solution && question.status === QuestionStatus.Pending) {
-        question.status = QuestionStatus.Solved;
-        question.solvedAt = new Date();
-      }
-    }
-    if (difficulty !== undefined) question.difficulty = difficulty;
-    if (topic !== undefined) question.topic = topic;
-    if (source !== undefined) question.source = source;
-    if (url !== undefined) question.url = url;
-    if (tags !== undefined) question.tags = tags;
-    if (companyTags !== undefined) question.companyTags = companyTags;
-    if (category !== undefined) question.category = category;
-
-    await question.save();
 
     cache.invalidate(`stats:${userId}`);
     sendSuccess(res, question);
@@ -294,7 +308,7 @@ export const searchQuestions = async (req: AuthRequest, res: Response) => {
     const skip = (page - 1) * limit;
 
     const [questions, total] = await Promise.all([
-      Question.find(filter, { score: { $meta: "textScore" } })
+      Question.find(filter, { ...LIST_PROJECTION, score: { $meta: "textScore" } })
         .sort({ score: { $meta: "textScore" } })
         .skip(skip)
         .limit(limit)
@@ -341,7 +355,7 @@ export const createBacklogQuestion = async (req: AuthRequest, res: Response) => 
     const userId = req.user?.id;
     const { title, notes, solution, difficulty, topic, source, url, tags, companyTags, category } = req.body;
 
-    const question = await Question.create({
+    const doc = await Question.create({
       userId,
       category,
       title,
@@ -356,7 +370,7 @@ export const createBacklogQuestion = async (req: AuthRequest, res: Response) => 
     });
 
     cache.invalidate(`stats:${userId}`);
-    sendSuccess(res, question, 201);
+    sendSuccess(res, doc.toObject(), 201);
   } catch (error) {
     logger.error((error as Error).message);
     sendError(res, "Error creating backlog question");
@@ -389,7 +403,7 @@ export const getBacklogQuestions = async (req: AuthRequest, res: Response) => {
     const skip = (page - 1) * limit;
 
     const [questions, total] = await Promise.all([
-      Question.find(filter).sort(sort).skip(skip).limit(limit).lean(),
+      Question.find(filter, LIST_PROJECTION).sort(sort).skip(skip).limit(limit).lean(),
       Question.countDocuments(filter),
     ]);
 

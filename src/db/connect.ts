@@ -15,7 +15,9 @@ export const connectToDB = () => {
   });
 
   connectionPromise = mongoose
-    .connect(process.env.CONNECTION_STRING as string)
+    .connect(process.env.CONNECTION_STRING as string, {
+      autoIndex: process.env.NODE_ENV !== "production",
+    })
     .then(() => logger.info("MongoDB connected"))
     .catch((err) => {
       connectionPromise = null;

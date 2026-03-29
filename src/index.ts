@@ -37,7 +37,7 @@ app.use(cors());
 app.use(
   rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: isProd ? 100 : 1000,
+    max: isProd ? 300 : 1000,
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, error: { message: "Too many requests, please try again later" } },
@@ -81,10 +81,13 @@ app.get(
   }
 );
 
-// Ensure DB is connected before handling requests (critical for serverless)
+// Ensure DB is connected before handling requests (critical for serverless cold starts)
+let dbReady = false;
 app.use(async (_req, _res, next) => {
+  if (dbReady) return next();
   try {
     await connectToDB();
+    dbReady = true;
     next();
   } catch {
     next(new Error("Database connection failed"));
