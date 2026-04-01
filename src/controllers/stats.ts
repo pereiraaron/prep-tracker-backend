@@ -249,7 +249,7 @@ export const getProgress = async (req: AuthRequest, res: Response) => {
       },
       {
         $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt" } },
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt", timezone: "Asia/Kolkata" } },
           count: { $sum: 1 },
         },
       },
@@ -297,7 +297,7 @@ export const getStreaks = async (req: AuthRequest, res: Response) => {
       { $match: { userId, status: QuestionStatus.Solved, solvedAt: { $ne: null } } },
       {
         $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt" } },
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt", timezone: "Asia/Kolkata" } },
         },
       },
       { $sort: { _id: 1 } },
@@ -494,7 +494,7 @@ export const getHeatmap = async (req: AuthRequest, res: Response) => {
       },
       {
         $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt" } },
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt", timezone: "Asia/Kolkata" } },
           count: { $sum: 1 },
         },
       },
@@ -541,7 +541,7 @@ export const getWeeklyProgress = async (req: AuthRequest, res: Response) => {
       },
       {
         $group: {
-          _id: { $dateToString: { format: "%G-W%V", date: "$solvedAt" } },
+          _id: { $dateToString: { format: "%G-W%V", date: "$solvedAt", timezone: "Asia/Kolkata" } },
           count: { $sum: 1 },
         },
       },
@@ -611,7 +611,7 @@ export const getCumulativeProgress = async (req: AuthRequest, res: Response) => 
             { $match: { solvedAt: { $gte: startDate } } },
             {
               $group: {
-                _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt" } },
+                _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt", timezone: "Asia/Kolkata" } },
                 count: { $sum: 1 },
               },
             },
@@ -827,7 +827,7 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
         const startDate = toISTMidnight(now);
         const solved = await Question.aggregate([
           { $match: { userId, status: QuestionStatus.Solved, solvedAt: { $gte: startDate } } },
-          { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt" } }, count: { $sum: 1 } } },
+          { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt", timezone: "Asia/Kolkata" } }, count: { $sum: 1 } } },
           { $sort: { _id: 1 } },
         ]);
         const solvedMap = new Map(solved.map((s) => [s._id, s.count]));
@@ -852,7 +852,7 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
         startDate.setDate(startDate.getDate() - weeks * 7);
         const solved = await Question.aggregate([
           { $match: { userId, status: QuestionStatus.Solved, solvedAt: { $gte: startDate } } },
-          { $group: { _id: { $dateToString: { format: "%G-W%V", date: "$solvedAt" } }, count: { $sum: 1 } } },
+          { $group: { _id: { $dateToString: { format: "%G-W%V", date: "$solvedAt", timezone: "Asia/Kolkata" } }, count: { $sum: 1 } } },
           { $sort: { _id: 1 } },
         ]);
         const solvedMap = new Map(solved.map((s) => [s._id, s.count]));
@@ -888,7 +888,7 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
               priorCount: [{ $match: { solvedAt: { $lt: startDate } } }, { $count: "count" }],
               daily: [
                 { $match: { solvedAt: { $gte: startDate } } },
-                { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt" } }, count: { $sum: 1 } } },
+                { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt", timezone: "Asia/Kolkata" } }, count: { $sum: 1 } } },
                 { $sort: { _id: 1 } },
               ],
             },
@@ -964,7 +964,7 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
         const endDate = new Date(`${year + 1}-01-01T00:00:00.000+05:30`);
         const solved = await Question.aggregate([
           { $match: { userId, status: QuestionStatus.Solved, solvedAt: { $gte: startDate, $lt: endDate } } },
-          { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt" } }, count: { $sum: 1 } } },
+          { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt", timezone: "Asia/Kolkata" } }, count: { $sum: 1 } } },
         ]);
         const heatmap: Record<string, number> = {};
         for (const s of solved) heatmap[s._id] = s.count;
@@ -997,7 +997,7 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
       tasks.streaks = async () => {
         const solved = await Question.aggregate([
           { $match: { userId, status: QuestionStatus.Solved, solvedAt: { $ne: null } } },
-          { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt" } } } },
+          { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt", timezone: "Asia/Kolkata" } } } },
           { $sort: { _id: 1 } },
         ]);
         if (solved.length === 0) return { currentStreak: 0, longestStreak: 0, totalActiveDays: 0 };
@@ -1106,7 +1106,7 @@ const fetchInsightsData = async (userId: string) => {
         ],
         dailyRows: [
           { $match: { status: QuestionStatus.Solved, solvedAt: { $gte: sixtyDaysAgo } } },
-          { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt" } }, count: { $sum: 1 } } },
+          { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt", timezone: "Asia/Kolkata" } }, count: { $sum: 1 } } },
           { $sort: { _id: 1 } },
         ],
         backlogCount: [{ $match: { status: QuestionStatus.Pending } }, { $count: "count" }],
