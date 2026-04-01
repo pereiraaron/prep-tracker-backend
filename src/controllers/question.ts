@@ -9,6 +9,22 @@ import { cache } from "../utils/cache";
 // Exclude heavy fields from list queries (solution/notes can be 50KB each)
 const LIST_PROJECTION = { solution: 0, notes: 0, templates: 0 } as const;
 
+// Granular cache invalidation groups
+const ALL_STATS = [
+  "overview", "categories", "difficulties", "topics", "sources", "companyTags",
+  "tags", "progress", "weeklyProgress", "cumulativeProgress", "heatmap",
+  "difficultyByCategory", "streaks", "insights", "batch",
+] as const;
+const BACKLOG_STATS = ["overview", "insights", "batch"] as const;
+const METADATA_STATS = [
+  "overview", "categories", "difficulties", "topics", "sources", "companyTags",
+  "tags", "difficultyByCategory", "insights", "batch",
+] as const;
+
+const invalidateStats = (userId: string, keys: readonly string[]) => {
+  for (const key of keys) cache.invalidate(`stats:${userId}:${key}`);
+};
+
 // ---- CRUD ----
 
 export const createQuestion = async (req: AuthRequest, res: Response) => {
@@ -32,7 +48,7 @@ export const createQuestion = async (req: AuthRequest, res: Response) => {
       solvedAt: new Date(),
     });
 
-    cache.invalidate(`stats:${userId}`);
+    invalidateStats(userId!, ALL_STATS);
     sendSuccess(res, doc.toObject(), 201);
   } catch (error) {
     logger.error((error as Error).message);
@@ -165,7 +181,7 @@ export const updateQuestion = async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    cache.invalidate(`stats:${userId}`);
+    invalidateStats(userId!, solution ? ALL_STATS : METADATA_STATS);
     sendSuccess(res, question);
   } catch (error) {
     logger.error((error as Error).message);
@@ -183,7 +199,7 @@ export const deleteQuestion = async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    cache.invalidate(`stats:${userId}`);
+    invalidateStats(userId!, ALL_STATS);
     sendSuccess(res, { message: "Question deleted" });
   } catch (error) {
     logger.error((error as Error).message);
@@ -213,7 +229,7 @@ export const solveQuestion = async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    cache.invalidate(`stats:${userId}`);
+    invalidateStats(userId!, ALL_STATS);
     sendSuccess(res, question);
   } catch (error) {
     logger.error((error as Error).message);
@@ -242,7 +258,7 @@ export const resetQuestion = async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    cache.invalidate(`stats:${userId}`);
+    invalidateStats(userId!, ALL_STATS);
     sendSuccess(res, question);
   } catch (error) {
     logger.error((error as Error).message);
@@ -337,7 +353,7 @@ export const bulkDeleteQuestions = async (req: AuthRequest, res: Response) => {
 
     const result = await Question.deleteMany({ _id: { $in: ids }, userId });
 
-    cache.invalidate(`stats:${userId}`);
+    invalidateStats(userId!, ALL_STATS);
     sendSuccess(res, {
       message: `Deleted ${result.deletedCount} questions`,
       deletedCount: result.deletedCount,
@@ -369,7 +385,7 @@ export const createBacklogQuestion = async (req: AuthRequest, res: Response) => 
       companyTags,
     });
 
-    cache.invalidate(`stats:${userId}`);
+    invalidateStats(userId!, BACKLOG_STATS);
     sendSuccess(res, doc.toObject(), 201);
   } catch (error) {
     logger.error((error as Error).message);

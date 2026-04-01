@@ -101,7 +101,7 @@ beforeEach(() => jest.clearAllMocks());
 describe("createQuestion", () => {
   it("creates a solved question with category", async () => {
     const question = mockQuestionDoc({ status: QuestionStatus.Solved });
-    (Question.create as jest.Mock).mockResolvedValue(question);
+    (Question.create as jest.Mock).mockResolvedValue({ ...question, toObject: () => question });
 
     const req = mockReq({
       body: { title: "Two Sum", solution: "function twoSum() {}", topic: "arrays", category: "dsa" },
@@ -208,21 +208,19 @@ describe("getQuestionById", () => {
 // ---- updateQuestion ----
 describe("updateQuestion", () => {
   it("updates fields", async () => {
-    const question = mockQuestionDoc();
-    (Question.findOne as jest.Mock).mockResolvedValue(question);
+    const question = mockQuestionDoc({ title: "Updated" });
+    (Question.findOneAndUpdate as jest.Mock).mockReturnValue(mockFindOneAndUpdateChain(question));
 
     const req = mockReq({ params: { id: "q1" }, body: { title: "Updated" } });
     const res = mockRes();
 
     await updateQuestion(req, res);
 
-    expect(question.title).toBe("Updated");
-    expect(question.save).toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(200);
   });
 
   it("returns 404 when not found", async () => {
-    (Question.findOne as jest.Mock).mockResolvedValue(null);
+    (Question.findOneAndUpdate as jest.Mock).mockReturnValue(mockFindOneAndUpdateChain(null));
 
     const req = mockReq({ params: { id: "invalid" }, body: { title: "x" } });
     const res = mockRes();
@@ -403,7 +401,8 @@ describe("bulkDeleteQuestions", () => {
 // ---- createBacklogQuestion ----
 describe("createBacklogQuestion", () => {
   it("creates with provided category", async () => {
-    (Question.create as jest.Mock).mockResolvedValue(mockQuestionDoc({ category: "dsa" }));
+    const question = mockQuestionDoc({ category: "dsa" });
+    (Question.create as jest.Mock).mockResolvedValue({ ...question, toObject: () => question });
 
     const res = mockRes();
     await createBacklogQuestion(mockReq({ body: { title: "Backlog Q", category: "dsa", url: "https://example.com" } }), res);

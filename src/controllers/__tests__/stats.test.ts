@@ -92,7 +92,7 @@ describe("getOverview", () => {
 describe("getCategoryBreakdown", () => {
   it("returns solved counts per category", async () => {
     (Question.aggregate as jest.Mock).mockResolvedValue([
-      { _id: PrepCategory.DSA, count: 3 },
+      { _id: { category: PrepCategory.DSA, status: QuestionStatus.Solved }, count: 3 },
     ]);
 
     const res = mockRes();
@@ -100,7 +100,7 @@ describe("getCategoryBreakdown", () => {
 
     const body = res.json.mock.calls[0][0].data;
     const dsa = body.find((c: any) => c.category === PrepCategory.DSA);
-    expect(dsa.count).toBe(3);
+    expect(dsa.solved).toBe(3);
   });
 });
 
@@ -108,7 +108,7 @@ describe("getCategoryBreakdown", () => {
 describe("getDifficultyBreakdown", () => {
   it("returns solved counts per difficulty", async () => {
     (Question.aggregate as jest.Mock).mockResolvedValue([
-      { _id: Difficulty.Easy, count: 5 },
+      { _id: { difficulty: Difficulty.Easy, status: QuestionStatus.Solved }, count: 5 },
     ]);
 
     const res = mockRes();
@@ -116,7 +116,7 @@ describe("getDifficultyBreakdown", () => {
 
     const body = res.json.mock.calls[0][0].data;
     const easy = body.find((d: any) => d.difficulty === Difficulty.Easy);
-    expect(easy.count).toBe(5);
+    expect(easy.solved).toBe(5);
   });
 });
 
@@ -149,7 +149,7 @@ describe("getProgress", () => {
 describe("getSourceBreakdown", () => {
   it("returns solved counts per source", async () => {
     (Question.aggregate as jest.Mock).mockResolvedValue([
-      { _id: QuestionSource.Leetcode, count: 10 },
+      { _id: { source: QuestionSource.Leetcode, status: QuestionStatus.Solved }, count: 10 },
     ]);
 
     const res = mockRes();
@@ -158,7 +158,7 @@ describe("getSourceBreakdown", () => {
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0].data;
     const leetcode = body.find((s: any) => s.source === "leetcode");
-    expect(leetcode.count).toBe(10);
+    expect(leetcode.solved).toBe(10);
   });
 });
 
@@ -166,8 +166,8 @@ describe("getSourceBreakdown", () => {
 describe("getCompanyTagBreakdown", () => {
   it("returns solved counts per company sorted by count", async () => {
     (Question.aggregate as jest.Mock).mockResolvedValue([
-      { _id: "Google", count: 5 },
-      { _id: "Meta", count: 3 },
+      { companyTag: "Google", count: 5 },
+      { companyTag: "Meta", count: 3 },
     ]);
 
     const res = mockRes();
@@ -186,8 +186,8 @@ describe("getCompanyTagBreakdown", () => {
 describe("getTagBreakdown", () => {
   it("returns solved counts per tag sorted by count", async () => {
     (Question.aggregate as jest.Mock).mockResolvedValue([
-      { _id: "dp", count: 8 },
-      { _id: "greedy", count: 3 },
+      { tag: "dp", count: 8 },
+      { tag: "greedy", count: 3 },
     ]);
 
     const res = mockRes();
@@ -202,7 +202,7 @@ describe("getTagBreakdown", () => {
 
 // ---- getHeatmap ----
 describe("getHeatmap", () => {
-  it("returns heatmap with all dates in the year", async () => {
+  it("returns sparse heatmap for the year", async () => {
     (Question.aggregate as jest.Mock).mockResolvedValue([{ _id: "2026-01-15", count: 3 }]);
 
     const res = mockRes();
@@ -211,9 +211,7 @@ describe("getHeatmap", () => {
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0].data;
     expect(body["2026-01-15"]).toBe(3);
-    expect(body["2026-01-01"]).toBe(0);
-    expect(body["2026-12-31"]).toBe(0);
-    expect(Object.keys(body).length).toBe(365);
+    expect(Object.keys(body).length).toBe(1);
   });
 });
 
