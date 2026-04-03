@@ -104,7 +104,7 @@ describe("createQuestion", () => {
     (Question.create as jest.Mock).mockResolvedValue({ ...question, toObject: () => question });
 
     const req = mockReq({
-      body: { title: "Two Sum", solution: "function twoSum() {}", topic: "arrays", category: "dsa" },
+      body: { title: "Two Sum", solution: "function twoSum() {}", topics: ["arrays"], category: "dsa" },
     });
     const res = mockRes();
 

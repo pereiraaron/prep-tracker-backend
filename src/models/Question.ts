@@ -38,10 +38,10 @@ const questionSchema = new Schema<IQuestion>(
       $type: String,
       enum: Object.values(Difficulty),
     },
-    topic: {
-      $type: String,
-      trim: true,
-      maxlength: 100,
+    topics: {
+      $type: [String],
+      default: [],
+      validate: [(v: string[]) => v.length <= 20, "Cannot have more than 20 topics"],
     },
     source: {
       $type: String,
@@ -84,13 +84,13 @@ questionSchema.index({ userId: 1, category: 1 });
 questionSchema.index({ userId: 1, status: 1 });
 questionSchema.index({ userId: 1, solvedAt: 1 });
 questionSchema.index({ userId: 1, starred: 1 });
-questionSchema.index({ userId: 1, topic: 1 });
+questionSchema.index({ userId: 1, topics: 1 });
 questionSchema.index({ userId: 1, difficulty: 1 });
 questionSchema.index({ userId: 1, source: 1 });
 questionSchema.index({ userId: 1, status: 1, solvedAt: 1 });
 questionSchema.index({ userId: 1, status: 1, createdAt: -1 });
 questionSchema.index(
-  { title: "text", topic: "text", tags: "text", companyTags: "text" },
+  { title: "text", topics: "text", tags: "text", companyTags: "text" },
   { name: "question_text_search" }
 );
 

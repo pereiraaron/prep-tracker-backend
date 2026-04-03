@@ -123,14 +123,15 @@ async function computeDifficultyBreakdown(userId: string) {
 async function computeTopicBreakdown(userId: string, category?: string) {
   const matchFilter: Record<string, any> = {
     userId,
-    topic: { $nin: [null, ""] },
+    topics: { $exists: true, $ne: [] },
     status: QuestionStatus.Solved,
   };
   if (category) matchFilter.category = category;
 
   return Question.aggregate([
     { $match: matchFilter },
-    { $group: { _id: "$topic", count: { $sum: 1 } } },
+    { $unwind: "$topics" },
+    { $group: { _id: "$topics", count: { $sum: 1 } } },
     { $sort: { count: -1 } },
     { $limit: 30 },
     { $project: { _id: 0, topic: "$_id", count: 1 } },
@@ -372,6 +373,8 @@ async function computeInsights(userId: string, tz: string) {
   const now = new Date();
   const sixtyDaysAgo = toMidnight(new Date(), tz);
   sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+  const sevenDaysAgo = toMidnight(new Date(), tz);
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
   const solvedDimGroup = (dimKey: string) => ({
     $group: {
@@ -390,8 +393,9 @@ async function computeInsights(userId: string, tz: string) {
           solvedDimGroup("category"),
         ],
         topicRows: [
-          { $match: { topic: { $nin: [null, ""] }, status: QuestionStatus.Solved } },
-          solvedDimGroup("topic"),
+          { $match: { topics: { $exists: true, $ne: [] }, status: QuestionStatus.Solved } },
+          { $unwind: "$topics" },
+          solvedDimGroup("topics"),
         ],
         diffRows: [
           { $match: { difficulty: { $ne: null }, status: QuestionStatus.Solved } },
@@ -410,6 +414,23 @@ async function computeInsights(userId: string, tz: string) {
           { $project: { createdAt: 1 } },
         ],
         totalSolved: [{ $match: { status: QuestionStatus.Solved } }, { $count: "count" }],
+        // Backlog items cleared (pending → solved) in last 7 days:
+        // solvedAt is >1 min after createdAt, meaning it was created as pending first
+        backlogCleared: [
+          {
+            $match: {
+              status: QuestionStatus.Solved,
+              solvedAt: { $gte: sevenDaysAgo },
+              $expr: { $gt: [{ $subtract: ["$solvedAt", "$createdAt"] }, 60000] },
+            },
+          },
+          { $count: "count" },
+        ],
+        // New backlog items added in last 7 days
+        backlogAdded: [
+          { $match: { status: QuestionStatus.Pending, createdAt: { $gte: sevenDaysAgo } } },
+          { $count: "count" },
+        ],
       },
     },
   ]);
@@ -421,10 +442,12 @@ async function computeInsights(userId: string, tz: string) {
   const backlogCount = facetResult.backlogCount[0]?.count ?? 0;
   const backlogOldestDate: Date | null = facetResult.backlogOldest[0]?.createdAt ?? null;
   const totalSolved = facetResult.totalSolved[0]?.count ?? 0;
+  const backlogCleared = facetResult.backlogCleared[0]?.count ?? 0;
+  const backlogAdded = facetResult.backlogAdded[0]?.count ?? 0;
 
   return {
     weakAreas: buildWeakAreas(categoryMap, topicMap, difficultyMap, now),
-    tips: buildTips(categoryMap, topicMap, difficultyMap, dailySolvesMap, backlogCount, backlogOldestDate, now, tz),
+    tips: buildTips(categoryMap, topicMap, difficultyMap, dailySolvesMap, backlogCount, backlogOldestDate, backlogCleared, backlogAdded, now, tz),
     milestones: buildMilestones(categoryMap, difficultyMap, dailySolvesMap, totalSolved, tz),
   };
 }
@@ -493,6 +516,8 @@ function buildTips(
   dailySolvesMap: Map<string, number>,
   backlogCount: number,
   backlogOldestDate: Date | null,
+  backlogCleared: number,
+  backlogAdded: number,
   now: Date,
   tz: string
 ): Tip[] {
@@ -543,15 +568,18 @@ function buildTips(
 
   if (backlogCount > 0) {
     const oldestDays = backlogOldestDate ? Math.floor((now.getTime() - backlogOldestDate.getTime()) / 86400000) : 0;
+    const netCleared = backlogCleared - backlogAdded;
 
     if (backlogCount >= 20) {
-      if (weekSolved > 0)
-        tips.push({ text: `${backlogCount} items left in your backlog and you've solved ${weekSolved} this week — great momentum, keep it up!`, priority: "low" });
+      if (backlogCleared > 0 && netCleared > 0)
+        tips.push({ text: `You've cleared ${backlogCleared} backlog item${backlogCleared === 1 ? "" : "s"} this week — ${backlogCount} left, keep going!`, priority: "low" });
+      else if (backlogCleared > 0)
+        tips.push({ text: `${backlogCleared} backlog item${backlogCleared === 1 ? "" : "s"} cleared this week, but ${backlogAdded} new one${backlogAdded === 1 ? "" : "s"} added — try to stay ahead!`, priority: "medium" });
       else
         tips.push({ text: `You have ${backlogCount} items in your backlog — consider picking one to tackle today`, priority: "medium" });
     } else if (backlogCount >= 5) {
-      if (weekSolved > 0)
-        tips.push({ text: `Down to ${backlogCount} in your backlog — you're making solid progress!`, priority: "low" });
+      if (backlogCleared > 0)
+        tips.push({ text: `Down to ${backlogCount} in your backlog after clearing ${backlogCleared} this week — solid progress!`, priority: "low" });
       else
         tips.push({ text: `${backlogCount} questions in your backlog — a quick session could knock a few out`, priority: "low" });
     } else if (backlogCount > 0) {

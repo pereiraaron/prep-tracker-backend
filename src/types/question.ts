@@ -30,7 +30,7 @@ export interface IQuestion extends Document {
   solution?: string;
   status: QuestionStatus;
   difficulty?: Difficulty;
-  topic?: string;
+  topics: string[];
   source?: QuestionSource;
   url?: string;
   tags: string[];

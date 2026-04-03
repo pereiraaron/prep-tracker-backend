@@ -4,12 +4,14 @@ import { PrepCategory } from "../types/category";
 
 const objectId = z.string().regex(/^[a-f\d]{24}$/i, "Invalid ObjectId");
 
+const lowercaseArray = z.array(z.string().max(50).transform((s) => s.toLowerCase())).max(20);
+
 export const createQuestionSchema = z.object({
   title: z.string().trim().min(1, "Title is required").max(500),
   notes: z.string().max(50000).optional(),
   solution: z.string().min(1, "Solution is required").max(50000),
   difficulty: z.enum(Difficulty).optional(),
-  topic: z.string().max(100).optional(),
+  topics: lowercaseArray.optional(),
   source: z.enum(QuestionSource).optional(),
   url: z.url().max(2000).optional().or(z.literal("")),
   tags: z.array(z.string().max(50)).max(20).optional(),
@@ -22,7 +24,7 @@ export const updateQuestionSchema = z.object({
   notes: z.string().max(50000).optional(),
   solution: z.string().max(50000).optional(),
   difficulty: z.enum(Difficulty).nullable().optional(),
-  topic: z.string().max(100).nullable().optional(),
+  topics: lowercaseArray.nullable().optional(),
   source: z.enum(QuestionSource).nullable().optional(),
   url: z.url().max(2000).optional().or(z.literal("")).nullable(),
   tags: z.array(z.string().max(50)).max(20).optional(),
@@ -35,7 +37,7 @@ export const createBacklogQuestionSchema = z.object({
   notes: z.string().max(50000).optional(),
   solution: z.string().max(50000).optional(),
   difficulty: z.enum(Difficulty).optional(),
-  topic: z.string().max(100).optional(),
+  topics: lowercaseArray.optional(),
   source: z.enum(QuestionSource).optional(),
   url: z.url("URL is required").max(2000),
   tags: z.array(z.string().max(50)).max(20).optional(),

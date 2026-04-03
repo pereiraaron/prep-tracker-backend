@@ -319,6 +319,8 @@ describe("getInsights", () => {
         backlogCount: [],
         backlogOldest: [],
         totalSolved: [],
+        backlogCleared: [],
+        backlogAdded: [],
         ...overrides,
       },
     ]);

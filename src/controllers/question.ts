@@ -30,7 +30,7 @@ const invalidateStats = (userId: string, keys: readonly string[]) => {
 export const createQuestion = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const { title, notes, solution, difficulty, topic, source, url, tags, companyTags, category } = req.body;
+    const { title, notes, solution, difficulty, topics, source, url, tags, companyTags, category } = req.body;
 
     const doc = await Question.create({
       userId,
@@ -39,7 +39,7 @@ export const createQuestion = async (req: AuthRequest, res: Response) => {
       notes,
       solution,
       difficulty,
-      topic,
+      topics,
       source,
       url,
       tags,
@@ -72,7 +72,7 @@ export const getAllQuestions = async (req: AuthRequest, res: Response) => {
     if (req.query.category) filter.category = req.query.category as string;
     if (req.query.status && !filter.status) filter.status = req.query.status as string;
     if (req.query.difficulty) filter.difficulty = req.query.difficulty as string;
-    if (req.query.topic) filter.topic = req.query.topic as string;
+    if (req.query.topic) filter.topics = req.query.topic as string;
     if (req.query.source) filter.source = req.query.source as string;
     if (req.query.tag) filter.tags = req.query.tag as string;
     if (req.query.companyTag) filter.companyTags = req.query.companyTag as string;
@@ -102,7 +102,7 @@ export const getAllQuestions = async (req: AuthRequest, res: Response) => {
     const sortParam = (req.query.sort as string) || "-createdAt";
     const sortDirection = sortParam.startsWith("-") ? -1 : 1;
     const sortField = sortParam.replace(/^-/, "");
-    const allowedSorts = ["createdAt", "updatedAt", "solvedAt", "title", "difficulty", "topic"];
+    const allowedSorts = ["createdAt", "updatedAt", "solvedAt", "title", "difficulty"];
     const sort: Record<string, 1 | -1> = allowedSorts.includes(sortField)
       ? { [sortField]: sortDirection }
       : { createdAt: -1 };
@@ -143,14 +143,14 @@ export const getQuestionById = async (req: AuthRequest, res: Response) => {
 export const updateQuestion = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const { title, notes, solution, difficulty, topic, source, url, tags, companyTags, category } = req.body;
+    const { title, notes, solution, difficulty, topics, source, url, tags, companyTags, category } = req.body;
 
     const $set: Record<string, any> = {};
     if (title !== undefined) $set.title = title;
     if (notes !== undefined) $set.notes = notes;
     if (solution !== undefined) $set.solution = solution;
     if (difficulty !== undefined) $set.difficulty = difficulty;
-    if (topic !== undefined) $set.topic = topic;
+    if (topics !== undefined) $set.topics = topics;
     if (source !== undefined) $set.source = source;
     if (url !== undefined) $set.url = url;
     if (tags !== undefined) $set.tags = tags;
@@ -308,29 +308,46 @@ export const searchQuestions = async (req: AuthRequest, res: Response) => {
 
     const trimmed = q.trim();
 
-    const filter: Record<string, any> = {
-      userId,
-      $text: { $search: trimmed },
-    };
-
-    // Additional filters
-    if (req.query.status) filter.status = req.query.status as string;
-    if (req.query.difficulty) filter.difficulty = req.query.difficulty as string;
-    if (req.query.category) filter.category = req.query.category as string;
-    if (req.query.source) filter.source = req.query.source as string;
+    const additionalFilters: Record<string, any> = {};
+    if (req.query.status) additionalFilters.status = req.query.status as string;
+    if (req.query.difficulty) additionalFilters.difficulty = req.query.difficulty as string;
+    if (req.query.category) additionalFilters.category = req.query.category as string;
+    if (req.query.source) additionalFilters.source = req.query.source as string;
 
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
     const skip = (page - 1) * limit;
 
-    const [questions, total] = await Promise.all([
-      Question.find(filter, { ...LIST_PROJECTION, score: { $meta: "textScore" } })
+    // Try $text search first (word-level matching with relevance scoring)
+    const textFilter = { userId, $text: { $search: trimmed }, ...additionalFilters };
+    let [questions, total] = await Promise.all([
+      Question.find(textFilter, { ...LIST_PROJECTION, score: { $meta: "textScore" } })
         .sort({ score: { $meta: "textScore" } })
         .skip(skip)
         .limit(limit)
         .lean(),
-      Question.countDocuments(filter),
+      Question.countDocuments(textFilter),
     ]);
+
+    // Fall back to case-insensitive regex on title/topic/tags for substring matches
+    // (handles camelCase tokens like "useScrollPosition" matching "use")
+    if (total === 0) {
+      const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = { $regex: escaped, $options: "i" };
+      const regexFilter = {
+        userId,
+        $or: [{ title: regex }, { topics: regex }, { tags: regex }, { companyTags: regex }],
+        ...additionalFilters,
+      };
+      [questions, total] = await Promise.all([
+        Question.find(regexFilter, LIST_PROJECTION)
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean(),
+        Question.countDocuments(regexFilter),
+      ]);
+    }
 
     sendPaginated(res, questions, { page, limit, total, totalPages: Math.ceil(total / limit) });
   } catch (error) {
@@ -369,7 +386,7 @@ export const bulkDeleteQuestions = async (req: AuthRequest, res: Response) => {
 export const createBacklogQuestion = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const { title, notes, solution, difficulty, topic, source, url, tags, companyTags, category } = req.body;
+    const { title, notes, solution, difficulty, topics, source, url, tags, companyTags, category } = req.body;
 
     const doc = await Question.create({
       userId,
@@ -378,7 +395,7 @@ export const createBacklogQuestion = async (req: AuthRequest, res: Response) => 
       notes,
       solution,
       difficulty,
-      topic,
+      topics,
       source,
       url,
       tags,
@@ -400,7 +417,7 @@ export const getBacklogQuestions = async (req: AuthRequest, res: Response) => {
 
     if (req.query.category) filter.category = req.query.category as string;
     if (req.query.difficulty) filter.difficulty = req.query.difficulty as string;
-    if (req.query.topic) filter.topic = req.query.topic as string;
+    if (req.query.topic) filter.topics = req.query.topic as string;
     if (req.query.source) filter.source = req.query.source as string;
     if (req.query.tag) filter.tags = req.query.tag as string;
     if (req.query.companyTag) filter.companyTags = req.query.companyTag as string;
@@ -409,7 +426,7 @@ export const getBacklogQuestions = async (req: AuthRequest, res: Response) => {
     const sortParam = (req.query.sort as string) || "-createdAt";
     const sortDirection = sortParam.startsWith("-") ? -1 : 1;
     const sortField = sortParam.replace(/^-/, "");
-    const allowedSorts = ["createdAt", "updatedAt", "title", "difficulty", "topic"];
+    const allowedSorts = ["createdAt", "updatedAt", "title", "difficulty"];
     const sort: Record<string, 1 | -1> = allowedSorts.includes(sortField)
       ? { [sortField]: sortDirection }
       : { createdAt: -1 };
