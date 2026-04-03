@@ -313,7 +313,6 @@ describe("getInsights", () => {
     (Question.aggregate as jest.Mock).mockResolvedValueOnce([
       {
         catRows: [],
-        topicRows: [],
         diffRows: [],
         dailyRows: [],
         backlogCount: [],
