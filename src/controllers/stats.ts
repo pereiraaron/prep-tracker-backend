@@ -534,15 +534,29 @@ function buildTips(
     tips.push({ text: `Medium problems are underrepresented — try adding more to balance your practice`, priority: "low" });
   }
 
+  let weekSolved = 0;
+  const checkDate = new Date(now);
+  for (let i = 0; i < 7; i++) {
+    weekSolved += dailySolvesMap.get(toDateString(checkDate, tz)) || 0;
+    checkDate.setDate(checkDate.getDate() - 1);
+  }
+
   if (backlogCount > 0) {
     const oldestDays = backlogOldestDate ? Math.floor((now.getTime() - backlogOldestDate.getTime()) / 86400000) : 0;
 
-    if (backlogCount >= 20)
-      tips.push({ text: `Your backlog has grown to ${backlogCount} items — consider picking one to tackle today`, priority: "medium" });
-    else if (backlogCount >= 5)
-      tips.push({ text: `${backlogCount} questions in your backlog — a quick session could knock a few out`, priority: "low" });
-    else if (backlogCount > 0)
-      tips.push({ text: `${backlogCount} item${backlogCount === 1 ? "" : "s"} in your backlog — you're almost at zero!`, priority: "low" });
+    if (backlogCount >= 20) {
+      if (weekSolved > 0)
+        tips.push({ text: `${backlogCount} items left in your backlog and you've solved ${weekSolved} this week — great momentum, keep it up!`, priority: "low" });
+      else
+        tips.push({ text: `You have ${backlogCount} items in your backlog — consider picking one to tackle today`, priority: "medium" });
+    } else if (backlogCount >= 5) {
+      if (weekSolved > 0)
+        tips.push({ text: `Down to ${backlogCount} in your backlog — you're making solid progress!`, priority: "low" });
+      else
+        tips.push({ text: `${backlogCount} questions in your backlog — a quick session could knock a few out`, priority: "low" });
+    } else if (backlogCount > 0) {
+      tips.push({ text: `Only ${backlogCount} item${backlogCount === 1 ? "" : "s"} left in your backlog — you're almost at zero!`, priority: "low" });
+    }
 
     if (oldestDays > 30)
       tips.push({ text: `Your oldest backlog item has been waiting ${oldestDays} days — maybe it's time to revisit or remove it`, priority: "low" });
@@ -550,12 +564,6 @@ function buildTips(
       tips.push({ text: `Some backlog items are over 2 weeks old — a good time to review what's still relevant`, priority: "low" });
   }
 
-  let weekSolved = 0;
-  const checkDate = new Date(now);
-  for (let i = 0; i < 7; i++) {
-    weekSolved += dailySolvesMap.get(toDateString(checkDate, tz)) || 0;
-    checkDate.setDate(checkDate.getDate() - 1);
-  }
   if (weekSolved >= 5)
     tips.push({ text: `${weekSolved} questions solved this week — you're on fire! Keep it going`, priority: "low" });
 
