@@ -138,6 +138,48 @@ async function computeTopicBreakdown(userId: string, category?: string) {
   ]);
 }
 
+async function computeDailyByCategory(userId: string, days: number, tz: string, category?: string) {
+  const now = new Date();
+  now.setDate(now.getDate() - days);
+  const startDate = toMidnight(now, tz);
+
+  const match: Record<string, any> = { userId, status: QuestionStatus.Solved, solvedAt: { $gte: startDate }, category: { $ne: null } };
+  if (category) match.category = category;
+
+  const daily = await Question.aggregate([
+    { $match: match },
+    { $group: { _id: { date: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt", timezone: tz } }, category: "$category" }, count: { $sum: 1 } } },
+    { $sort: { "_id.date": 1 } },
+  ]);
+
+  // Determine which categories appear
+  const categorySet = new Set<string>();
+  const dataMap = new Map<string, Record<string, number>>();
+  for (const row of daily) {
+    const { date, category: cat } = row._id;
+    categorySet.add(cat);
+    if (!dataMap.has(date)) dataMap.set(date, {});
+    dataMap.get(date)![cat] = row.count;
+  }
+  const categories = Object.values(PrepCategory).filter((c) => categorySet.has(c));
+
+  // Fill in all dates
+  const result: Array<Record<string, any>> = [];
+  const current = new Date(startDate);
+  const todayStr = toDateString(new Date(), tz);
+  let dateStr = toDateString(current, tz);
+  while (dateStr <= todayStr) {
+    const entry: Record<string, any> = { date: dateStr };
+    const dayData = dataMap.get(dateStr) || {};
+    for (const cat of categories) entry[cat] = dayData[cat] || 0;
+    result.push(entry);
+    current.setDate(current.getDate() + 1);
+    dateStr = toDateString(current, tz);
+  }
+
+  return { categories, days: result };
+}
+
 async function computeSourceBreakdown(userId: string) {
   const pipeline = await Question.aggregate([
     { $match: { userId, source: { $nin: [null, ""] } } },
@@ -146,9 +188,46 @@ async function computeSourceBreakdown(userId: string) {
   return computeStatusBreakdown(pipeline, Object.values(QuestionSource), "source");
 }
 
-async function computeCompanyTagBreakdown(userId: string) {
+async function computeBacklogAge(userId: string, category?: string) {
+  const match: Record<string, any> = { userId, status: QuestionStatus.Pending };
+  if (category) match.category = category;
+
+  const now = new Date();
+  const d7 = new Date(now.getTime() - 7 * 86400000);
+  const d14 = new Date(now.getTime() - 14 * 86400000);
+  const d28 = new Date(now.getTime() - 28 * 86400000);
+  const d90 = new Date(now.getTime() - 90 * 86400000);
+
+  const pipeline = await Question.aggregate([
+    { $match: match },
+    {
+      $addFields: {
+        ageBucket: {
+          $switch: {
+            branches: [
+              { case: { $gte: ["$createdAt", d7] }, then: "< 1 week" },
+              { case: { $gte: ["$createdAt", d14] }, then: "1–2 weeks" },
+              { case: { $gte: ["$createdAt", d28] }, then: "2–4 weeks" },
+              { case: { $gte: ["$createdAt", d90] }, then: "1–3 months" },
+            ],
+            default: "3+ months",
+          },
+        },
+      },
+    },
+    { $group: { _id: "$ageBucket", count: { $sum: 1 } } },
+  ]);
+
+  const labels = ["< 1 week", "1–2 weeks", "2–4 weeks", "1–3 months", "3+ months"];
+  const countMap = new Map(pipeline.map((r) => [r._id, r.count]));
+  return labels.map((label) => ({ label, count: countMap.get(label) || 0 }));
+}
+
+async function computeCompanyTagBreakdown(userId: string, category?: string) {
+  const match: Record<string, any> = { userId, companyTags: { $exists: true, $ne: [] }, status: QuestionStatus.Solved };
+  if (category) match.category = category;
   return Question.aggregate([
-    { $match: { userId, companyTags: { $exists: true, $ne: [] }, status: QuestionStatus.Solved } },
+    { $match: match },
     { $unwind: "$companyTags" },
     { $group: { _id: "$companyTags", count: { $sum: 1 } } },
     { $sort: { count: -1 } },
@@ -168,13 +247,16 @@ async function computeTagBreakdown(userId: string) {
   ]);
 }
 
-async function computeProgress(userId: string, days: number, tz: string) {
+async function computeProgress(userId: string, days: number, tz: string, category?: string) {
   const now = new Date();
   now.setDate(now.getDate() - days);
   const startDate = toMidnight(now, tz);
 
+  const match: Record<string, any> = { userId, status: QuestionStatus.Solved, solvedAt: { $gte: startDate } };
+  if (category) match.category = category;
+
   const solved = await Question.aggregate([
-    { $match: { userId, status: QuestionStatus.Solved, solvedAt: { $gte: startDate } } },
+    { $match: match },
     { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt", timezone: tz } }, count: { $sum: 1 } } },
     { $sort: { _id: 1 } },
   ]);
@@ -249,13 +331,16 @@ async function computeHeatmap(userId: string, year: number, tz: string) {
   return heatmap;
 }
 
-async function computeWeeklyProgress(userId: string, weeks: number, tz: string) {
+async function computeWeeklyProgress(userId: string, weeks: number, tz: string, category?: string) {
   const now = new Date();
   const startDate = toMidnight(now, tz);
   startDate.setDate(startDate.getDate() - weeks * 7);
 
+  const match: Record<string, any> = { userId, status: QuestionStatus.Solved, solvedAt: { $gte: startDate } };
+  if (category) match.category = category;
+
   const solved = await Question.aggregate([
-    { $match: { userId, status: QuestionStatus.Solved, solvedAt: { $gte: startDate } } },
+    { $match: match },
     { $group: { _id: { $dateToString: { format: "%G-W%V", date: "$solvedAt", timezone: tz } }, count: { $sum: 1 } } },
     { $sort: { _id: 1 } },
   ]);
@@ -282,13 +367,16 @@ async function computeWeeklyProgress(userId: string, weeks: number, tz: string) 
   return result;
 }
 
-async function computeCumulativeProgress(userId: string, days: number, tz: string) {
+async function computeCumulativeProgress(userId: string, days: number, tz: string, category?: string) {
   const now = new Date();
   now.setDate(now.getDate() - days);
   const startDate = toMidnight(now, tz);
 
+  const match: Record<string, any> = { userId, status: QuestionStatus.Solved, solvedAt: { $ne: null } };
+  if (category) match.category = category;
+
   const [facetResult] = await Question.aggregate([
-    { $match: { userId, status: QuestionStatus.Solved, solvedAt: { $ne: null } } },
+    { $match: match },
     {
       $facet: {
         priorCount: [{ $match: { solvedAt: { $lt: startDate } } }, { $count: "count" }],
@@ -665,11 +753,22 @@ export const getCompanyTagBreakdown = (req: AuthRequest, res: Response) =>
 export const getTagBreakdown = (req: AuthRequest, res: Response) =>
   handleStat(req, res, `stats:${req.user!.id}:tags`, () => computeTagBreakdown(req.user!.id), "Error fetching tag breakdown");
 
+export const getDailyByCategory = (req: AuthRequest, res: Response) => {
+  const userId = req.user!.id;
+  const days = parseInt(req.query.days as string) || 14;
+  const tz = getTz(req);
+  const category = req.query.category as string | undefined;
+  const key = `stats:${userId}:dailyByCategory:${days}:${category || "all"}`;
+  return handleStat(req, res, key, () => computeDailyByCategory(userId, days, tz, category), "Error fetching daily by category");
+};
+
 export const getProgress = (req: AuthRequest, res: Response) => {
   const userId = req.user!.id;
   const days = parseInt(req.query.days as string) || 30;
   const tz = getTz(req);
-  return handleStat(req, res, `stats:${userId}:progress:${days}`, () => computeProgress(userId, days, tz), "Error fetching progress stats");
+  const category = req.query.category as string | undefined;
+  const key = `stats:${userId}:progress:${days}:${category || "all"}`;
+  return handleStat(req, res, key, () => computeProgress(userId, days, tz, category), "Error fetching progress stats");
 };
 
 export const getStreaks = (req: AuthRequest, res: Response) => {
@@ -690,14 +789,18 @@ export const getWeeklyProgress = (req: AuthRequest, res: Response) => {
   const userId = req.user!.id;
   const weeks = parseInt(req.query.weeks as string) || 12;
   const tz = getTz(req);
-  return handleStat(req, res, `stats:${userId}:weeklyProgress:${weeks}`, () => computeWeeklyProgress(userId, weeks, tz), "Error fetching weekly progress");
+  const category = req.query.category as string | undefined;
+  const key = `stats:${userId}:weeklyProgress:${weeks}:${category || "all"}`;
+  return handleStat(req, res, key, () => computeWeeklyProgress(userId, weeks, tz, category), "Error fetching weekly progress");
 };
 
 export const getCumulativeProgress = (req: AuthRequest, res: Response) => {
   const userId = req.user!.id;
   const days = parseInt(req.query.days as string) || 90;
   const tz = getTz(req);
-  return handleStat(req, res, `stats:${userId}:cumulativeProgress:${days}`, () => computeCumulativeProgress(userId, days, tz), "Error fetching cumulative progress");
+  const category = req.query.category as string | undefined;
+  const key = `stats:${userId}:cumulativeProgress:${days}:${category || "all"}`;
+  return handleStat(req, res, key, () => computeCumulativeProgress(userId, days, tz, category), "Error fetching cumulative progress");
 };
 
 export const getDifficultyByCategory = (req: AuthRequest, res: Response) =>
@@ -719,12 +822,12 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
       ? (req.query.keys as string).split(",").map((k) => k.trim()).sort()
       : null;
 
-    const batchCacheKey = `stats:${userId}:batch:${requestedKeys?.join(",") || "all"}`;
+    const category = req.query.category as string | undefined;
+    const batchCacheKey = `stats:${userId}:batch:${requestedKeys?.join(",") || "all"}:${category || "all"}`;
     if (req.query.refresh !== "true") {
       const cached = cache.get(batchCacheKey);
       if (cached) { sendSuccess(res, cached); return; }
     }
-
     const shouldInclude = (key: string) => !requestedKeys || requestedKeys.includes(key);
     const tasks: Record<string, () => Promise<any>> = {};
 
@@ -735,19 +838,23 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
     if (shouldInclude("difficulties"))
       tasks.difficulties = () => cachedCompute(`stats:${userId}:difficulties`, () => computeDifficultyBreakdown(userId));
     if (shouldInclude("topics"))
-      tasks.topics = () => cachedCompute(`stats:${userId}:topics:all`, () => computeTopicBreakdown(userId));
+      tasks.topics = () => cachedCompute(`stats:${userId}:topics:${category || "all"}`, () => computeTopicBreakdown(userId, category));
     if (shouldInclude("sources"))
       tasks.sources = () => cachedCompute(`stats:${userId}:sources`, () => computeSourceBreakdown(userId));
     if (shouldInclude("companyTags"))
-      tasks.companyTags = () => cachedCompute(`stats:${userId}:companyTags`, () => computeCompanyTagBreakdown(userId));
+      tasks.companyTags = () => cachedCompute(`stats:${userId}:companyTags:${category || "all"}`, () => computeCompanyTagBreakdown(userId, category));
     if (shouldInclude("tags"))
       tasks.tags = () => cachedCompute(`stats:${userId}:tags`, () => computeTagBreakdown(userId));
+    if (shouldInclude("dailyByCategory"))
+      tasks.dailyByCategory = () => cachedCompute(`stats:${userId}:dailyByCategory:14:${category || "all"}`, () => computeDailyByCategory(userId, 14, tz, category));
+    if (shouldInclude("backlogAge"))
+      tasks.backlogAge = () => cachedCompute(`stats:${userId}:backlogAge:${category || "all"}`, () => computeBacklogAge(userId, category));
     if (shouldInclude("progress"))
-      tasks.progress = () => cachedCompute(`stats:${userId}:progress:14`, () => computeProgress(userId, 14, tz));
+      tasks.progress = () => cachedCompute(`stats:${userId}:progress:14:${category || "all"}`, () => computeProgress(userId, 14, tz, category));
     if (shouldInclude("weeklyProgress"))
-      tasks.weeklyProgress = () => cachedCompute(`stats:${userId}:weeklyProgress:12`, () => computeWeeklyProgress(userId, 12, tz));
+      tasks.weeklyProgress = () => cachedCompute(`stats:${userId}:weeklyProgress:12:${category || "all"}`, () => computeWeeklyProgress(userId, 12, tz, category));
     if (shouldInclude("cumulativeProgress"))
-      tasks.cumulativeProgress = () => cachedCompute(`stats:${userId}:cumulativeProgress:90`, () => computeCumulativeProgress(userId, 90, tz));
+      tasks.cumulativeProgress = () => cachedCompute(`stats:${userId}:cumulativeProgress:90:${category || "all"}`, () => computeCumulativeProgress(userId, 90, tz, category));
     if (shouldInclude("heatmap")) {
       const year = new Date().getFullYear();
       tasks.heatmap = () => cachedCompute(`stats:${userId}:heatmap:${year}`, () => computeHeatmap(userId, year, tz));

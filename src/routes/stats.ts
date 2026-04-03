@@ -15,6 +15,7 @@ import {
   getDifficultyByCategory,
   getStreaks,
   getInsights,
+  getDailyByCategory,
   getBatch,
 } from "../controllers/stats";
 
@@ -28,6 +29,7 @@ router.get("/topics", authenticate, getTopicBreakdown);
 router.get("/sources", authenticate, getSourceBreakdown);
 router.get("/company-tags", authenticate, getCompanyTagBreakdown);
 router.get("/tags", authenticate, getTagBreakdown);
+router.get("/daily-by-category", authenticate, getDailyByCategory);
 router.get("/progress", authenticate, getProgress);
 router.get("/weekly-progress", authenticate, getWeeklyProgress);
 router.get("/cumulative-progress", authenticate, getCumulativeProgress);
