@@ -318,36 +318,23 @@ export const searchQuestions = async (req: AuthRequest, res: Response) => {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
     const skip = (page - 1) * limit;
 
-    // Try $text search first (word-level matching with relevance scoring)
-    const textFilter = { userId, $text: { $search: trimmed }, ...additionalFilters };
-    let [questions, total] = await Promise.all([
-      Question.find(textFilter, { ...LIST_PROJECTION, score: { $meta: "textScore" } })
-        .sort({ score: { $meta: "textScore" } })
+    // Case-insensitive regex search on title/topics/tags/companyTags
+    // (supports substring matches like "use" matching "useState")
+    const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = { $regex: escaped, $options: "i" };
+    const searchFilter = {
+      userId,
+      $or: [{ title: regex }, { topics: regex }, { tags: regex }, { companyTags: regex }],
+      ...additionalFilters,
+    };
+    const [questions, total] = await Promise.all([
+      Question.find(searchFilter, LIST_PROJECTION)
+        .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .lean(),
-      Question.countDocuments(textFilter),
+      Question.countDocuments(searchFilter),
     ]);
-
-    // Fall back to case-insensitive regex on title/topic/tags for substring matches
-    // (handles camelCase tokens like "useScrollPosition" matching "use")
-    if (total === 0) {
-      const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const regex = { $regex: escaped, $options: "i" };
-      const regexFilter = {
-        userId,
-        $or: [{ title: regex }, { topics: regex }, { tags: regex }, { companyTags: regex }],
-        ...additionalFilters,
-      };
-      [questions, total] = await Promise.all([
-        Question.find(regexFilter, LIST_PROJECTION)
-          .sort({ createdAt: -1 })
-          .skip(skip)
-          .limit(limit)
-          .lean(),
-        Question.countDocuments(regexFilter),
-      ]);
-    }
 
     sendPaginated(res, questions, { page, limit, total, totalPages: Math.ceil(total / limit) });
   } catch (error) {

@@ -367,7 +367,12 @@ describe("searchQuestions", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     const findFilter = (Question.find as jest.Mock).mock.calls[0][0];
-    expect(findFilter.$text).toEqual({ $search: "Two Sum" });
+    expect(findFilter.$or).toEqual([
+      { title: { $regex: "Two Sum", $options: "i" } },
+      { topics: { $regex: "Two Sum", $options: "i" } },
+      { tags: { $regex: "Two Sum", $options: "i" } },
+      { companyTags: { $regex: "Two Sum", $options: "i" } },
+    ]);
   });
 
   it("returns 400 when query is missing", async () => {
