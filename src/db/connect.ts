@@ -18,6 +18,9 @@ export const connectToDB = () => {
   connectionPromise = mongoose
     .connect(process.env.CONNECTION_STRING as string, {
       autoIndex: process.env.NODE_ENV !== "production",
+      maxPoolSize: process.env.VERCEL ? 5 : 10,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
     })
     .then(() => logger.info("MongoDB connected"))
     .then(() => runMigrations())

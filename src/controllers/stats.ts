@@ -33,14 +33,6 @@ const handleStat = async (
   }
 };
 
-const cachedCompute = async (cacheKey: string, compute: () => Promise<any>) => {
-  const cached = cache.get(cacheKey);
-  if (cached) return cached;
-  const data = await compute();
-  cache.set(cacheKey, data);
-  return data;
-};
-
 // ---- Compute functions (shared between individual endpoints and batch) ----
 
 async function computeOverview(userId: string) {
@@ -812,6 +804,258 @@ export const getInsights = (req: AuthRequest, res: Response) => {
   return handleStat(req, res, `stats:${userId}:insights`, () => computeInsights(userId, tz), "Error fetching insights");
 };
 
+// ---- Batch-optimized consolidated pipelines ----
+// Combine multiple aggregations into single $facet calls to reduce DB round trips.
+// Individual endpoint handlers above continue to use their own compute functions.
+
+async function computeBatchBreakdowns(userId: string) {
+  const [f] = await Question.aggregate([
+    { $match: { userId } },
+    {
+      $facet: {
+        overviewByCat: [
+          { $match: { category: { $ne: null }, status: QuestionStatus.Solved } },
+          { $group: { _id: "$category", count: { $sum: 1 } } },
+        ],
+        overviewByDiff: [
+          { $match: { difficulty: { $ne: null }, status: QuestionStatus.Solved } },
+          { $group: { _id: "$difficulty", count: { $sum: 1 } } },
+        ],
+        totalSolved: [{ $match: { status: QuestionStatus.Solved } }, { $count: "count" }],
+        backlogCount: [{ $match: { status: QuestionStatus.Pending } }, { $count: "count" }],
+        catByStatus: [
+          { $match: { category: { $ne: null } } },
+          { $group: { _id: { category: "$category", status: "$status" }, count: { $sum: 1 } } },
+        ],
+        diffByStatus: [
+          { $match: { difficulty: { $ne: null } } },
+          { $group: { _id: { difficulty: "$difficulty", status: "$status" }, count: { $sum: 1 } } },
+        ],
+        srcByStatus: [
+          { $match: { source: { $nin: [null, ""] } } },
+          { $group: { _id: { source: "$source", status: "$status" }, count: { $sum: 1 } } },
+        ],
+        diffByCat: [
+          { $match: { category: { $ne: null }, difficulty: { $ne: null }, status: QuestionStatus.Solved } },
+          { $group: { _id: { category: "$category", difficulty: "$difficulty" }, count: { $sum: 1 } } },
+        ],
+      },
+    },
+  ]);
+
+  const categoryMap: Record<string, number> = {};
+  for (const c of Object.values(PrepCategory)) categoryMap[c] = 0;
+  for (const row of f.overviewByCat) categoryMap[row._id] = row.count;
+  const difficultyMap: Record<string, number> = {};
+  for (const d of Object.values(Difficulty)) difficultyMap[d] = 0;
+  for (const row of f.overviewByDiff) difficultyMap[row._id] = row.count;
+
+  const overview = {
+    totalSolved: f.totalSolved[0]?.count ?? 0,
+    backlogCount: f.backlogCount[0]?.count ?? 0,
+    byCategory: categoryMap,
+    byDifficulty: difficultyMap,
+  };
+
+  const categories = computeStatusBreakdown(f.catByStatus, Object.values(PrepCategory), "category");
+  const difficulties = computeStatusBreakdown(f.diffByStatus, Object.values(Difficulty), "difficulty");
+  const sources = computeStatusBreakdown(f.srcByStatus, Object.values(QuestionSource), "source");
+
+  const catDiffMap: Record<string, { easy: number; medium: number; hard: number }> = {};
+  for (const c of Object.values(PrepCategory)) catDiffMap[c] = { easy: 0, medium: 0, hard: 0 };
+  for (const row of f.diffByCat) {
+    const cat = row._id.category;
+    const diff = row._id.difficulty as string;
+    if (!catDiffMap[cat]) continue;
+    if (diff === Difficulty.Easy) catDiffMap[cat].easy += row.count;
+    else if (diff === Difficulty.Medium) catDiffMap[cat].medium += row.count;
+    else if (diff === Difficulty.Hard) catDiffMap[cat].hard += row.count;
+  }
+  const difficultyByCategory = Object.entries(catDiffMap).map(([category, counts]) => ({
+    category,
+    ...counts,
+    total: counts.easy + counts.medium + counts.hard,
+  }));
+
+  return { overview, categories, difficulties, sources, difficultyByCategory };
+}
+
+async function computeBatchArrayFields(userId: string, category?: string) {
+  const topicMatch: Record<string, any> = { topics: { $exists: true, $ne: [] } };
+  if (category) topicMatch.category = category;
+  const companyMatch: Record<string, any> = { companyTags: { $exists: true, $ne: [] } };
+  if (category) companyMatch.category = category;
+
+  const [f] = await Question.aggregate([
+    { $match: { userId, status: QuestionStatus.Solved } },
+    {
+      $facet: {
+        topics: [
+          { $match: topicMatch },
+          { $unwind: "$topics" },
+          { $group: { _id: "$topics", count: { $sum: 1 } } },
+          { $sort: { count: -1 } },
+          { $limit: 30 },
+          { $project: { _id: 0, topic: "$_id", count: 1 } },
+        ],
+        companyTags: [
+          { $match: companyMatch },
+          { $unwind: "$companyTags" },
+          { $group: { _id: "$companyTags", count: { $sum: 1 } } },
+          { $sort: { count: -1 } },
+          { $limit: 30 },
+          { $project: { _id: 0, companyTag: "$_id", count: 1 } },
+        ],
+        tags: [
+          { $match: { tags: { $exists: true, $ne: [] } } },
+          { $unwind: "$tags" },
+          { $group: { _id: "$tags", count: { $sum: 1 } } },
+          { $sort: { count: -1 } },
+          { $limit: 30 },
+          { $project: { _id: 0, tag: "$_id", count: 1 } },
+        ],
+      },
+    },
+  ]);
+
+  return { topics: f.topics, companyTags: f.companyTags, tags: f.tags };
+}
+
+async function computeBatchProgress(userId: string, tz: string, category?: string) {
+  const now = new Date();
+  const d14 = toMidnight(new Date(now.getTime() - 14 * 86400000), tz);
+  const d84 = toMidnight(new Date(now.getTime() - 84 * 86400000), tz);
+  const d90 = toMidnight(new Date(now.getTime() - 90 * 86400000), tz);
+  const todayStr = toDateString(new Date(), tz);
+
+  const match: Record<string, any> = { userId, status: QuestionStatus.Solved, solvedAt: { $ne: null } };
+  if (category) match.category = category;
+
+  const [f] = await Question.aggregate([
+    { $match: match },
+    {
+      $facet: {
+        daily: [
+          { $match: { solvedAt: { $gte: d14 } } },
+          { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt", timezone: tz } }, count: { $sum: 1 } } },
+          { $sort: { _id: 1 } },
+        ],
+        weekly: [
+          { $match: { solvedAt: { $gte: d84 } } },
+          { $group: { _id: { $dateToString: { format: "%G-W%V", date: "$solvedAt", timezone: tz } }, count: { $sum: 1 } } },
+          { $sort: { _id: 1 } },
+        ],
+        cumulativePrior: [
+          { $match: { solvedAt: { $lt: d90 } } },
+          { $count: "count" },
+        ],
+        cumulativeDaily: [
+          { $match: { solvedAt: { $gte: d90 } } },
+          { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt", timezone: tz } }, count: { $sum: 1 } } },
+          { $sort: { _id: 1 } },
+        ],
+      },
+    },
+  ]);
+
+  // Daily progress (14 days)
+  const dailyMap = new Map<string, number>(f.daily.map((s: any) => [s._id, s.count]));
+  const progress: Array<{ date: string; solved: number }> = [];
+  const cur1 = new Date(d14);
+  let ds1 = toDateString(cur1, tz);
+  while (ds1 <= todayStr) {
+    progress.push({ date: ds1, solved: dailyMap.get(ds1) || 0 });
+    cur1.setDate(cur1.getDate() + 1);
+    ds1 = toDateString(cur1, tz);
+  }
+
+  // Weekly progress (12 weeks)
+  const weeklyMap = new Map<string, number>(f.weekly.map((s: any) => [s._id, s.count]));
+  const weeklyProgress: Array<{ week: string; startDate: string; solved: number }> = [];
+  const cur2 = new Date(d84);
+  cur2.setDate(cur2.getDate() - ((cur2.getDay() + 6) % 7));
+  while (toDateString(cur2, tz) <= todayStr) {
+    const weekStart = toDateString(cur2, tz);
+    const temp = new Date(cur2);
+    temp.setDate(temp.getDate() + 3 - ((temp.getDay() + 6) % 7));
+    const yearStart = new Date(temp.getFullYear(), 0, 4);
+    const weekNum = Math.ceil(((temp.getTime() - yearStart.getTime()) / 86400000 + yearStart.getDay() + 1) / 7);
+    const weekStr = `${temp.getFullYear()}-W${String(weekNum).padStart(2, "0")}`;
+    weeklyProgress.push({ week: weekStr, startDate: weekStart, solved: weeklyMap.get(weekStr) || 0 });
+    cur2.setDate(cur2.getDate() + 7);
+  }
+
+  // Cumulative progress (90 days)
+  const priorCount = f.cumulativePrior[0]?.count ?? 0;
+  const cumDailyMap = new Map(f.cumulativeDaily.map((d: any) => [d._id, d.count]));
+  const cumulativeProgress: Array<{ date: string; total: number }> = [];
+  let runningTotal = priorCount;
+  const cur3 = new Date(d90);
+  let ds3 = toDateString(cur3, tz);
+  while (ds3 <= todayStr) {
+    runningTotal += cumDailyMap.get(ds3) || 0;
+    cumulativeProgress.push({ date: ds3, total: runningTotal });
+    cur3.setDate(cur3.getDate() + 1);
+    ds3 = toDateString(cur3, tz);
+  }
+
+  return { progress, weeklyProgress, cumulativeProgress };
+}
+
+async function computeBatchActivity(userId: string, year: number, tz: string) {
+  const yearStart = toMidnight(new Date(`${year}-01-01T12:00:00Z`), tz);
+  const yearEnd = toMidnight(new Date(`${year + 1}-01-01T12:00:00Z`), tz);
+
+  const [f] = await Question.aggregate([
+    { $match: { userId, status: QuestionStatus.Solved, solvedAt: { $ne: null } } },
+    {
+      $facet: {
+        heatmapRows: [
+          { $match: { solvedAt: { $gte: yearStart, $lt: yearEnd } } },
+          { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt", timezone: tz } }, count: { $sum: 1 } } },
+        ],
+        streakDates: [
+          { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt", timezone: tz } } } },
+          { $sort: { _id: 1 } },
+        ],
+      },
+    },
+  ]);
+
+  const heatmap: Record<string, number> = {};
+  for (const s of f.heatmapRows) heatmap[s._id] = s.count;
+
+  let streaks = { currentStreak: 0, longestStreak: 0, totalActiveDays: 0 };
+  const dates = f.streakDates.map((s: any) => s._id as string);
+  if (dates.length > 0) {
+    const totalActiveDays = dates.length;
+    let longestStreak = 1;
+    let currentRun = 1;
+    for (let i = 1; i < dates.length; i++) {
+      const prev = new Date(dates[i - 1]);
+      const curr = new Date(dates[i]);
+      if ((curr.getTime() - prev.getTime()) / 86400000 === 1) currentRun++;
+      else currentRun = 1;
+      if (currentRun > longestStreak) longestStreak = currentRun;
+    }
+    let currentStreak = 0;
+    const today = toMidnight(new Date(), tz);
+    const dateSet = new Set(dates);
+    const latestDate = toMidnight(new Date(`${dates[dates.length - 1]}T12:00:00Z`), tz);
+    const daysSinceLatest = Math.round((today.getTime() - latestDate.getTime()) / 86400000);
+    if (daysSinceLatest <= 1) {
+      const checkDate = new Date(latestDate);
+      while (dateSet.has(toDateString(checkDate, tz))) {
+        currentStreak++;
+        checkDate.setDate(checkDate.getDate() - 1);
+      }
+    }
+    streaks = { currentStreak, longestStreak, totalActiveDays };
+  }
+
+  return { heatmap, streaks };
+}
+
 // ---- Batch ----
 
 export const getBatch = async (req: AuthRequest, res: Response) => {
@@ -829,47 +1073,37 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
       if (cached) { sendSuccess(res, cached); return; }
     }
     const shouldInclude = (key: string) => !requestedKeys || requestedKeys.includes(key);
-    const tasks: Record<string, () => Promise<any>> = {};
 
-    if (shouldInclude("overview"))
-      tasks.overview = () => cachedCompute(`stats:${userId}:overview`, () => computeOverview(userId));
-    if (shouldInclude("categories"))
-      tasks.categories = () => cachedCompute(`stats:${userId}:categories`, () => computeCategoryBreakdown(userId));
-    if (shouldInclude("difficulties"))
-      tasks.difficulties = () => cachedCompute(`stats:${userId}:difficulties`, () => computeDifficultyBreakdown(userId));
-    if (shouldInclude("topics"))
-      tasks.topics = () => cachedCompute(`stats:${userId}:topics:${category || "all"}`, () => computeTopicBreakdown(userId, category));
-    if (shouldInclude("sources"))
-      tasks.sources = () => cachedCompute(`stats:${userId}:sources`, () => computeSourceBreakdown(userId));
-    if (shouldInclude("companyTags"))
-      tasks.companyTags = () => cachedCompute(`stats:${userId}:companyTags:${category || "all"}`, () => computeCompanyTagBreakdown(userId, category));
-    if (shouldInclude("tags"))
-      tasks.tags = () => cachedCompute(`stats:${userId}:tags`, () => computeTagBreakdown(userId));
+    // Consolidated groups — each runs one DB query instead of many
+    const BREAKDOWN_KEYS = ["overview", "categories", "difficulties", "sources", "difficultyByCategory"];
+    const ARRAY_KEYS = ["topics", "companyTags", "tags"];
+    const PROGRESS_KEYS = ["progress", "weeklyProgress", "cumulativeProgress"];
+    const ACTIVITY_KEYS = ["heatmap", "streaks"];
+
+    const promises: Array<Promise<Record<string, any>>> = [];
+
+    if (BREAKDOWN_KEYS.some(shouldInclude))
+      promises.push(computeBatchBreakdowns(userId));
+    if (ARRAY_KEYS.some(shouldInclude))
+      promises.push(computeBatchArrayFields(userId, category));
+    if (PROGRESS_KEYS.some(shouldInclude))
+      promises.push(computeBatchProgress(userId, tz, category));
+    if (ACTIVITY_KEYS.some(shouldInclude))
+      promises.push(computeBatchActivity(userId, new Date().getFullYear(), tz));
     if (shouldInclude("dailyByCategory"))
-      tasks.dailyByCategory = () => cachedCompute(`stats:${userId}:dailyByCategory:14:${category || "all"}`, () => computeDailyByCategory(userId, 14, tz, category));
+      promises.push(computeDailyByCategory(userId, 14, tz, category).then((d) => ({ dailyByCategory: d })));
     if (shouldInclude("backlogAge"))
-      tasks.backlogAge = () => cachedCompute(`stats:${userId}:backlogAge:${category || "all"}`, () => computeBacklogAge(userId, category));
-    if (shouldInclude("progress"))
-      tasks.progress = () => cachedCompute(`stats:${userId}:progress:14:${category || "all"}`, () => computeProgress(userId, 14, tz, category));
-    if (shouldInclude("weeklyProgress"))
-      tasks.weeklyProgress = () => cachedCompute(`stats:${userId}:weeklyProgress:12:${category || "all"}`, () => computeWeeklyProgress(userId, 12, tz, category));
-    if (shouldInclude("cumulativeProgress"))
-      tasks.cumulativeProgress = () => cachedCompute(`stats:${userId}:cumulativeProgress:90:${category || "all"}`, () => computeCumulativeProgress(userId, 90, tz, category));
-    if (shouldInclude("heatmap")) {
-      const year = new Date().getFullYear();
-      tasks.heatmap = () => cachedCompute(`stats:${userId}:heatmap:${year}`, () => computeHeatmap(userId, year, tz));
-    }
-    if (shouldInclude("difficultyByCategory"))
-      tasks.difficultyByCategory = () => cachedCompute(`stats:${userId}:difficultyByCategory`, () => computeDifficultyByCategory(userId));
-    if (shouldInclude("streaks"))
-      tasks.streaks = () => cachedCompute(`stats:${userId}:streaks`, () => computeStreaks(userId, tz));
+      promises.push(computeBacklogAge(userId, category).then((d) => ({ backlogAge: d })));
     if (shouldInclude("insights"))
-      tasks.insights = () => cachedCompute(`stats:${userId}:insights`, () => computeInsights(userId, tz));
+      promises.push(computeInsights(userId, tz).then((d) => ({ insights: d })));
 
-    const keys = Object.keys(tasks);
-    const values = await Promise.all(keys.map((k) => tasks[k]()));
+    const groups = await Promise.all(promises);
     const result: Record<string, any> = {};
-    keys.forEach((k, i) => { result[k] = values[i]; });
+    for (const group of groups) {
+      for (const [key, value] of Object.entries(group)) {
+        if (shouldInclude(key)) result[key] = value;
+      }
+    }
 
     cache.set(batchCacheKey, result);
     sendSuccess(res, result);
