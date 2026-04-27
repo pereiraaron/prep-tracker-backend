@@ -23,6 +23,7 @@ const METADATA_STATS = [
 
 const invalidateStats = (userId: string, keys: readonly string[]) => {
   for (const key of keys) cache.invalidate(`stats:${userId}:${key}`);
+  cache.invalidate(`suggestions:${userId}`);
 };
 
 // ---- CRUD ----
@@ -431,5 +432,64 @@ export const getBacklogQuestions = async (req: AuthRequest, res: Response) => {
   } catch (error) {
     logger.error((error as Error).message);
     sendError(res, "Error fetching backlog questions");
+  }
+};
+
+// ---- Suggestions ----
+
+export const getSuggestions = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    const cacheKey = `suggestions:${userId}`;
+    const cached = cache.get(cacheKey);
+    if (cached) { sendSuccess(res, cached); return; }
+
+    const [f] = await Question.aggregate([
+      { $match: { userId } },
+      {
+        $facet: {
+          topicsByCategory: [
+            { $match: { topics: { $exists: true, $ne: [] }, category: { $ne: null } } },
+            { $unwind: "$topics" },
+            { $group: { _id: { category: "$category", topic: "$topics" }, count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+            { $group: { _id: "$_id.category", topics: { $push: "$_id.topic" } } },
+          ],
+          tags: [
+            { $match: { tags: { $exists: true, $ne: [] } } },
+            { $unwind: "$tags" },
+            { $group: { _id: "$tags", count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+            { $limit: 50 },
+            { $project: { _id: 0, tag: "$_id" } },
+          ],
+          companyTags: [
+            { $match: { companyTags: { $exists: true, $ne: [] } } },
+            { $unwind: "$companyTags" },
+            { $group: { _id: "$companyTags", count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+            { $limit: 50 },
+            { $project: { _id: 0, company: "$_id" } },
+          ],
+        },
+      },
+    ]);
+
+    const topicsByCategory: Record<string, string[]> = {};
+    for (const row of f.topicsByCategory) {
+      topicsByCategory[row._id] = row.topics.slice(0, 40);
+    }
+
+    const result = {
+      topicsByCategory,
+      tags: f.tags.map((t: any) => t.tag),
+      companyTags: f.companyTags.map((c: any) => c.company),
+    };
+
+    cache.set(cacheKey, result, 600000);
+    sendSuccess(res, result);
+  } catch (error) {
+    logger.error((error as Error).message);
+    sendError(res, "Error fetching suggestions");
   }
 };

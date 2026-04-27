@@ -21,6 +21,7 @@ import {
   bulkDeleteQuestions,
   createBacklogQuestion,
   getBacklogQuestions,
+  getSuggestions,
 } from "../controllers/question";
 import { getTemplates, getSubmission, saveSubmission } from "../controllers/submission";
 import { saveSubmissionSchema } from "../validators/submission";
@@ -28,6 +29,7 @@ import { saveSubmissionSchema } from "../validators/submission";
 const router = Router();
 
 // Named endpoints (must be before /:id to avoid conflicts)
+router.get("/suggestions", authenticate, getSuggestions);
 router.get("/search", authenticate, searchQuestions);
 router.post("/bulk-delete", authenticate, validate(bulkDeleteSchema), bulkDeleteQuestions);
 router

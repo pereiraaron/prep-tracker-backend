@@ -23,7 +23,7 @@ const swaggerSpec = {
       },
       PrepCategory: {
         type: "string" as const,
-        enum: ["dsa", "system_design", "behavioral", "machine_coding", "language_framework"],
+        enum: ["dsa", "system_design", "machine_coding", "language_framework", "theory"],
       },
       QuestionStatus: {
         type: "string" as const,

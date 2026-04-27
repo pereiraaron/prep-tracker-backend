@@ -302,8 +302,8 @@ describe("getDifficultyByCategory", () => {
     expect(sd.easy).toBe(0);
     expect(sd.total).toBe(4);
 
-    const behavioral = body.find((c: any) => c.category === PrepCategory.Behavioral);
-    expect(behavioral.total).toBe(0);
+    const theory = body.find((c: any) => c.category === PrepCategory.Theory);
+    expect(theory.total).toBe(0);
   });
 });
 
@@ -332,8 +332,7 @@ describe("getInsights", () => {
     await getInsights(mockReq({ query: { refresh: "true" } }), res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    const { weakAreas, tips, milestones } = res.json.mock.calls[0][0].data;
-    expect(weakAreas).toEqual([]);
+    const { tips, milestones } = res.json.mock.calls[0][0].data;
     expect(tips).toEqual([]);
     expect(milestones.every((m: any) => !m.achieved)).toBe(true);
   });

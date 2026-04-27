@@ -431,13 +431,6 @@ interface DimensionEntry {
   lastSolved: Date | null;
 }
 
-interface WeakAreaItem {
-  type: "category" | "difficulty";
-  name: string;
-  count: number;
-  lastSolvedDaysAgo: number | null;
-}
-
 interface Tip {
   text: string;
   priority: "high" | "medium" | "low";
@@ -520,7 +513,6 @@ async function computeInsights(userId: string, tz: string) {
   const backlogAdded = facetResult.backlogAdded[0]?.count ?? 0;
 
   return {
-    weakAreas: buildWeakAreas(categoryMap, difficultyMap, now),
     tips: buildTips(categoryMap, difficultyMap, dailySolvesMap, backlogCount, backlogOldestDate, backlogCleared, backlogAdded, now, tz),
     milestones: buildMilestones(categoryMap, difficultyMap, dailySolvesMap, totalSolved, tz),
   };
@@ -541,51 +533,6 @@ function reduceByDimension(rows: any[], initKeys?: string[]): Map<string, Dimens
     }
   }
   return map;
-}
-
-function buildWeakAreas(
-  categoryMap: Map<string, DimensionEntry>,
-  difficultyMap: Map<string, DimensionEntry>,
-  now: Date
-): WeakAreaItem[] {
-  const totalSolved = [...categoryMap.values()].reduce((s, e) => s + e.count, 0);
-  if (totalSolved === 0) return [];
-
-  const daysAgo = (d: Date | null): number | null =>
-    d ? Math.floor((now.getTime() - d.getTime()) / 86400000) : null;
-  const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
-
-  const scored: (WeakAreaItem & { score: number })[] = [];
-
-  // Categories: score = 0.6 × countDeficit + 0.4 × recencyDecay
-  const maxCatCount = Math.max(...[...categoryMap.values()].map((e) => e.count));
-  for (const [name, e] of categoryMap) {
-    const countDeficit = 1 - e.count / maxCatCount;
-    const days = daysAgo(e.lastSolved);
-    const recency = clamp01((days ?? 30) / 30);
-    const score = 0.6 * countDeficit + 0.4 * recency;
-    if (score > 0.3) {
-      scored.push({ type: "category", name: CATEGORY_LABEL[name] || name, count: e.count, lastSolvedDaysAgo: days, score });
-    }
-  }
-
-  // Difficulties: score = 0.7 × shareDeficit + 0.3 × recencyDecay
-  const expectedShare = 1 / difficultyMap.size;
-  for (const [name, e] of difficultyMap) {
-    const actualShare = e.count / totalSolved;
-    const shareDeficit = clamp01((expectedShare - actualShare) / expectedShare);
-    const days = daysAgo(e.lastSolved);
-    const recency = clamp01((days ?? 30) / 30);
-    const score = 0.7 * shareDeficit + 0.3 * recency;
-    if (score > 0.3) {
-      scored.push({ type: "difficulty", name, count: e.count, lastSolvedDaysAgo: days, score });
-    }
-  }
-
-  return scored
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 5)
-    .map(({ score, ...item }) => item);
 }
 
 function buildTips(
@@ -1092,8 +1039,6 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
       promises.push(computeBatchActivity(userId, new Date().getFullYear(), tz));
     if (shouldInclude("dailyByCategory"))
       promises.push(computeDailyByCategory(userId, 14, tz, category).then((d) => ({ dailyByCategory: d })));
-    if (shouldInclude("backlogAge"))
-      promises.push(computeBacklogAge(userId, category).then((d) => ({ backlogAge: d })));
     if (shouldInclude("insights"))
       promises.push(computeInsights(userId, tz).then((d) => ({ insights: d })));
 
