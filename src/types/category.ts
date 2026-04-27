@@ -6,6 +6,12 @@ export enum PrepCategory {
   Theory = "theory",
 }
 
+export const SOLUTION_OPTIONAL_CATEGORIES: PrepCategory[] = [
+  PrepCategory.SystemDesign,
+  PrepCategory.Theory,
+  PrepCategory.LanguageFramework,
+];
+
 export const CATEGORY_LABEL: Record<string, string> = {
   dsa: "DSA",
   system_design: "System Design",

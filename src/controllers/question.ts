@@ -2,6 +2,7 @@ import { Response } from "express";
 import { Question } from "../models/Question";
 import { AuthRequest } from "../types/auth";
 import { QuestionStatus } from "../types/question";
+import { PrepCategory, SOLUTION_OPTIONAL_CATEGORIES } from "../types/category";
 import { sendSuccess, sendPaginated, sendError } from "../utils/response";
 import { logger } from "../utils/logger";
 import { cache } from "../utils/cache";
@@ -210,25 +211,27 @@ export const deleteQuestion = async (req: AuthRequest, res: Response) => {
 
 // ---- Solve ----
 
+
 export const solveQuestion = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
     const { solution } = req.body;
+
+    const existing = await Question.findOne({ _id: req.params.id, userId }).lean();
+    if (!existing) { sendError(res, "Question not found", 404); return; }
+    if (existing.status === QuestionStatus.Solved) { sendError(res, "Question is already solved", 400); return; }
+
+    const solutionRequired = !SOLUTION_OPTIONAL_CATEGORIES.includes(existing.category as PrepCategory);
+    if (solutionRequired && (!solution || !solution.trim())) {
+      sendError(res, "Solution is required for this category", 400);
+      return;
+    }
+
     const question = await Question.findOneAndUpdate(
-      { _id: req.params.id, userId, status: { $ne: QuestionStatus.Solved } },
+      { _id: req.params.id, userId },
       { $set: { status: QuestionStatus.Solved, solvedAt: new Date(), ...(solution ? { solution } : {}) } },
       { new: true }
     ).lean();
-
-    if (!question) {
-      const exists = await Question.exists({ _id: req.params.id, userId });
-      if (exists) {
-        sendError(res, "Question is already solved", 400);
-      } else {
-        sendError(res, "Question not found", 404);
-      }
-      return;
-    }
 
     invalidateStats(userId!, ALL_STATS);
     sendSuccess(res, question);
@@ -437,6 +440,64 @@ export const getBacklogQuestions = async (req: AuthRequest, res: Response) => {
 
 // ---- Suggestions ----
 
+// Default presets — shown to all users, user's frequently-used items are ranked first
+const DEFAULT_TOPICS: Record<string, string[]> = {
+  dsa: [
+    "arrays", "strings", "hash map", "two pointers", "sliding window",
+    "binary search", "linked list", "stack", "queue", "trees",
+    "binary trees", "bst", "graphs", "bfs", "dfs",
+    "dynamic programming", "recursion", "backtracking", "greedy",
+    "heap", "trie", "sorting", "math", "bit manipulation",
+  ],
+  system_design: [
+    "scalability", "load balancing", "caching", "database design",
+    "message queues", "microservices", "api design", "cdn",
+    "consistency", "availability", "rate limiting", "sharding",
+    "event-driven", "cap theorem", "sql vs nosql",
+  ],
+  machine_coding: [
+    "react", "vanilla js", "dom manipulation", "state management",
+    "event handling", "component design", "async patterns",
+    "debounce/throttle", "drag & drop", "virtual scrolling",
+    "form validation", "accessibility", "css layout", "canvas/svg",
+  ],
+  language_framework: [
+    "closures", "promises", "async/await", "prototypes",
+    "event loop", "hoisting", "scope", "generics",
+    "type system", "hooks", "context api", "middleware",
+    "decorators", "iterators", "modules",
+  ],
+  theory: [
+    "os concepts", "networking", "dbms", "oop",
+    "design patterns", "solid principles", "complexity analysis",
+    "concurrency", "memory management", "compilers",
+    "distributed systems",
+  ],
+};
+
+const DEFAULT_TAGS = [
+  "revisit", "tricky", "important", "weak-area", "interview-ready",
+  "needs-review", "blind-75", "neetcode-150", "top-interview",
+  "asked-in-interview", "one-liner", "follow-up",
+];
+
+const DEFAULT_COMPANIES = [
+  "Google", "Meta", "Amazon", "Apple", "Microsoft", "Netflix",
+  "Uber", "Stripe", "Adobe", "Oracle", "Flipkart", "Atlassian",
+  "Intuit", "Goldman Sachs", "Morgan Stanley",
+];
+
+const mergeDefaults = (userItems: string[], defaults: string[]): string[] => {
+  const seen = new Set(userItems.map((s) => s.toLowerCase()));
+  for (const item of defaults) {
+    if (!seen.has(item.toLowerCase())) {
+      userItems.push(item);
+      seen.add(item.toLowerCase());
+    }
+  }
+  return userItems;
+};
+
 export const getSuggestions = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
@@ -476,14 +537,16 @@ export const getSuggestions = async (req: AuthRequest, res: Response) => {
     ]);
 
     const topicsByCategory: Record<string, string[]> = {};
-    for (const row of f.topicsByCategory) {
-      topicsByCategory[row._id] = row.topics.slice(0, 40);
+    for (const cat of Object.keys(DEFAULT_TOPICS)) {
+      const row = f.topicsByCategory.find((r: any) => r._id === cat);
+      const userTopics = row ? row.topics.slice(0, 40) : [];
+      topicsByCategory[cat] = mergeDefaults(userTopics, DEFAULT_TOPICS[cat]);
     }
 
     const result = {
       topicsByCategory,
-      tags: f.tags.map((t: any) => t.tag),
-      companyTags: f.companyTags.map((c: any) => c.company),
+      tags: mergeDefaults(f.tags.map((t: any) => t.tag), DEFAULT_TAGS),
+      companyTags: mergeDefaults(f.companyTags.map((c: any) => c.company), DEFAULT_COMPANIES),
     };
 
     cache.set(cacheKey, result, 600000);
