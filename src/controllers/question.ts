@@ -512,14 +512,14 @@ export const getSuggestions = async (req: AuthRequest, res: Response) => {
           topicsByCategory: [
             { $match: { topics: { $exists: true, $ne: [] }, category: { $ne: null } } },
             { $unwind: "$topics" },
-            { $group: { _id: { category: "$category", topic: "$topics" }, count: { $sum: 1 } } },
+            { $group: { _id: { category: "$category", topic: { $toLower: "$topics" } }, count: { $sum: 1 } } },
             { $sort: { count: -1 } },
             { $group: { _id: "$_id.category", topics: { $push: "$_id.topic" } } },
           ],
           tags: [
             { $match: { tags: { $exists: true, $ne: [] } } },
             { $unwind: "$tags" },
-            { $group: { _id: "$tags", count: { $sum: 1 } } },
+            { $group: { _id: { $toLower: "$tags" }, count: { $sum: 1 } } },
             { $sort: { count: -1 } },
             { $limit: 50 },
             { $project: { _id: 0, tag: "$_id" } },
