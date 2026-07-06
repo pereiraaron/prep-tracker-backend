@@ -12,6 +12,11 @@ export const SOLUTION_OPTIONAL_CATEGORIES: PrepCategory[] = [
   PrepCategory.LanguageFramework,
 ];
 
+export const MULTIPLE_SOLUTION_CATEGORIES: PrepCategory[] = [
+  PrepCategory.DSA,
+  PrepCategory.MachineCoding,
+];
+
 export const CATEGORY_LABEL: Record<string, string> = {
   dsa: "DSA",
   system_design: "System Design",

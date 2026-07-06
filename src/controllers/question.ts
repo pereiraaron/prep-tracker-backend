@@ -6,9 +6,8 @@ import { PrepCategory, SOLUTION_OPTIONAL_CATEGORIES } from "../types/category";
 import { sendSuccess, sendPaginated, sendError } from "../utils/response";
 import { logger } from "../utils/logger";
 import { cache } from "../utils/cache";
-
-// Exclude heavy fields from list queries (solution/notes can be 50KB each)
-const LIST_PROJECTION = { solution: 0, notes: 0, templates: 0 } as const;
+import { hasSolutionContent, normalizeSolutions, getMultipleSolutionsError, hasMultipleSolutions } from "../utils/solution";
+import { paginatedList, userStatsStages, STATS_CACHE_TTL_MS } from "../utils/aggregation";
 
 // Granular cache invalidation groups
 const ALL_STATS = [
@@ -32,14 +31,22 @@ const invalidateStats = (userId: string, keys: readonly string[]) => {
 export const createQuestion = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const { title, notes, solution, difficulty, topics, source, url, tags, companyTags, category } = req.body;
+    const { title, notes, solutions, difficulty, topics, source, url, tags, companyTags, category } = req.body;
+
+    const multipleSolutionsError = getMultipleSolutionsError(category, { solutions });
+    if (multipleSolutionsError) {
+      sendError(res, multipleSolutionsError, 400);
+      return;
+    }
+
+    const normalizedSolutions = normalizeSolutions({ solutions });
 
     const doc = await Question.create({
       userId,
       category,
       title,
       notes,
-      solution,
+      ...normalizedSolutions,
       difficulty,
       topics,
       source,
@@ -113,10 +120,7 @@ export const getAllQuestions = async (req: AuthRequest, res: Response) => {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
     const skip = (page - 1) * limit;
 
-    const [questions, total] = await Promise.all([
-      Question.find(filter, LIST_PROJECTION).sort(sort).skip(skip).limit(limit).lean(),
-      Question.countDocuments(filter),
-    ]);
+    const { items: questions, total } = await paginatedList(Question, filter, sort, skip, limit);
 
     sendPaginated(res, questions, { page, limit, total, totalPages: Math.ceil(total / limit) });
   } catch (error) {
@@ -145,12 +149,33 @@ export const getQuestionById = async (req: AuthRequest, res: Response) => {
 export const updateQuestion = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const { title, notes, solution, difficulty, topics, source, url, tags, companyTags, category } = req.body;
+    const { title, notes, solutions, difficulty, topics, source, url, tags, companyTags, category } = req.body;
+
+    const updatingSolutions = solutions !== undefined;
+    if (updatingSolutions && hasMultipleSolutions({ solutions })) {
+      let effectiveCategory = category;
+      if (effectiveCategory === undefined) {
+        const existing = await Question.findOne({ _id: req.params.id, userId }, { category: 1 }).lean();
+        if (!existing) {
+          sendError(res, "Question not found", 404);
+          return;
+        }
+        effectiveCategory = existing.category;
+      }
+
+      const multipleSolutionsError = getMultipleSolutionsError(effectiveCategory, { solutions });
+      if (multipleSolutionsError) {
+        sendError(res, multipleSolutionsError, 400);
+        return;
+      }
+    }
 
     const $set: Record<string, any> = {};
     if (title !== undefined) $set.title = title;
     if (notes !== undefined) $set.notes = notes;
-    if (solution !== undefined) $set.solution = solution;
+    if (solutions !== undefined) {
+      Object.assign($set, normalizeSolutions({ solutions }));
+    }
     if (difficulty !== undefined) $set.difficulty = difficulty;
     if (topics !== undefined) $set.topics = topics;
     if (source !== undefined) $set.source = source;
@@ -159,14 +184,14 @@ export const updateQuestion = async (req: AuthRequest, res: Response) => {
     if (companyTags !== undefined) $set.companyTags = companyTags;
     if (category !== undefined) $set.category = category;
 
-    // Auto-solve if solution is added to a pending question
-    if (solution) {
+    const solutionAdded = hasSolutionContent({ solutions });
+    if (solutionAdded) {
       $set.status = QuestionStatus.Solved;
       $set.solvedAt = { $ifNull: ["$solvedAt", new Date()] };
     }
 
     // Use aggregation pipeline update for conditional solvedAt
-    const question = solution
+    const question = solutionAdded
       ? await Question.findOneAndUpdate(
           { _id: req.params.id, userId },
           [{ $set }],
@@ -183,7 +208,7 @@ export const updateQuestion = async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    invalidateStats(userId!, solution ? ALL_STATS : METADATA_STATS);
+    invalidateStats(userId!, solutionAdded ? ALL_STATS : METADATA_STATS);
     sendSuccess(res, question);
   } catch (error) {
     logger.error((error as Error).message);
@@ -215,21 +240,29 @@ export const deleteQuestion = async (req: AuthRequest, res: Response) => {
 export const solveQuestion = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const { solution } = req.body;
+    const { solutions } = req.body;
 
     const existing = await Question.findOne({ _id: req.params.id, userId }).lean();
     if (!existing) { sendError(res, "Question not found", 404); return; }
     if (existing.status === QuestionStatus.Solved) { sendError(res, "Question is already solved", 400); return; }
 
     const solutionRequired = !SOLUTION_OPTIONAL_CATEGORIES.includes(existing.category as PrepCategory);
-    if (solutionRequired && (!solution || !solution.trim())) {
+    if (solutionRequired && !hasSolutionContent({ solutions })) {
       sendError(res, "Solution is required for this category", 400);
       return;
     }
 
+    const multipleSolutionsError = getMultipleSolutionsError(existing.category, { solutions });
+    if (multipleSolutionsError) {
+      sendError(res, multipleSolutionsError, 400);
+      return;
+    }
+
+    const normalizedSolutions = normalizeSolutions({ solutions });
+
     const question = await Question.findOneAndUpdate(
       { _id: req.params.id, userId },
-      { $set: { status: QuestionStatus.Solved, solvedAt: new Date(), ...(solution ? { solution } : {}) } },
+      { $set: { status: QuestionStatus.Solved, solvedAt: new Date(), ...normalizedSolutions } },
       { new: true }
     ).lean();
 
@@ -331,14 +364,7 @@ export const searchQuestions = async (req: AuthRequest, res: Response) => {
       $or: [{ title: regex }, { topics: regex }, { tags: regex }, { companyTags: regex }],
       ...additionalFilters,
     };
-    const [questions, total] = await Promise.all([
-      Question.find(searchFilter, LIST_PROJECTION)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
-      Question.countDocuments(searchFilter),
-    ]);
+    const { items: questions, total } = await paginatedList(Question, searchFilter, { createdAt: -1 }, skip, limit);
 
     sendPaginated(res, questions, { page, limit, total, totalPages: Math.ceil(total / limit) });
   } catch (error) {
@@ -377,14 +403,22 @@ export const bulkDeleteQuestions = async (req: AuthRequest, res: Response) => {
 export const createBacklogQuestion = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const { title, notes, solution, difficulty, topics, source, url, tags, companyTags, category } = req.body;
+    const { title, notes, solutions, difficulty, topics, source, url, tags, companyTags, category } = req.body;
+
+    const multipleSolutionsError = getMultipleSolutionsError(category, { solutions });
+    if (multipleSolutionsError) {
+      sendError(res, multipleSolutionsError, 400);
+      return;
+    }
+
+    const normalizedSolutions = normalizeSolutions({ solutions });
 
     const doc = await Question.create({
       userId,
       category,
       title,
       notes,
-      solution,
+      ...normalizedSolutions,
       difficulty,
       topics,
       source,
@@ -426,10 +460,7 @@ export const getBacklogQuestions = async (req: AuthRequest, res: Response) => {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
     const skip = (page - 1) * limit;
 
-    const [questions, total] = await Promise.all([
-      Question.find(filter, LIST_PROJECTION).sort(sort).skip(skip).limit(limit).lean(),
-      Question.countDocuments(filter),
-    ]);
+    const { items: questions, total } = await paginatedList(Question, filter, sort, skip, limit);
 
     sendPaginated(res, questions, { page, limit, total, totalPages: Math.ceil(total / limit) });
   } catch (error) {
@@ -481,12 +512,6 @@ const DEFAULT_TAGS = [
   "asked-in-interview", "one-liner", "follow-up",
 ];
 
-const DEFAULT_COMPANIES = [
-  "Google", "Meta", "Amazon", "Apple", "Microsoft", "Netflix",
-  "Uber", "Stripe", "Adobe", "Oracle", "Flipkart", "Atlassian",
-  "Intuit", "Goldman Sachs", "Morgan Stanley",
-];
-
 const mergeDefaults = (userItems: string[], defaults: string[]): string[] => {
   const seen = new Set(userItems.map((s) => s.toLowerCase()));
   for (const item of defaults) {
@@ -506,7 +531,7 @@ export const getSuggestions = async (req: AuthRequest, res: Response) => {
     if (cached) { sendSuccess(res, cached); return; }
 
     const [f] = await Question.aggregate([
-      { $match: { userId } },
+      ...userStatsStages(userId!),
       {
         $facet: {
           topicsByCategory: [
@@ -527,10 +552,22 @@ export const getSuggestions = async (req: AuthRequest, res: Response) => {
           companyTags: [
             { $match: { companyTags: { $exists: true, $ne: [] } } },
             { $unwind: "$companyTags" },
-            { $group: { _id: "$companyTags", count: { $sum: 1 } } },
-            { $sort: { count: -1 } },
-            { $limit: 50 },
-            { $project: { _id: 0, company: "$_id" } },
+            {
+              $group: {
+                _id: { key: { $toLower: "$companyTags" }, company: "$companyTags" },
+                count: { $sum: 1 },
+              },
+            },
+            { $sort: { count: -1, "_id.company": 1 } },
+            {
+              $group: {
+                _id: "$_id.key",
+                company: { $first: "$_id.company" },
+                count: { $sum: "$count" },
+              },
+            },
+            { $sort: { count: -1, company: 1 } },
+            { $project: { _id: 0, company: 1 } },
           ],
         },
       },
@@ -546,10 +583,10 @@ export const getSuggestions = async (req: AuthRequest, res: Response) => {
     const result = {
       topicsByCategory,
       tags: mergeDefaults(f.tags.map((t: any) => t.tag), DEFAULT_TAGS),
-      companyTags: mergeDefaults(f.companyTags.map((c: any) => c.company), DEFAULT_COMPANIES),
+      companyTags: f.companyTags.map((c: any) => c.company),
     };
 
-    cache.set(cacheKey, result, 600000);
+    cache.set(cacheKey, result, STATS_CACHE_TTL_MS);
     sendSuccess(res, result);
   } catch (error) {
     logger.error((error as Error).message);

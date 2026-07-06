@@ -7,6 +7,7 @@ import { DEFAULT_TIMEZONE, toDateString, toMidnight } from "../utils/date";
 import { sendSuccess, sendError } from "../utils/response";
 import { logger } from "../utils/logger";
 import { cache } from "../utils/cache";
+import { STATS_PROJECT, STATS_CACHE_TTL_MS, userStatsStages } from "../utils/aggregation";
 
 // ---- Helpers ----
 
@@ -25,7 +26,7 @@ const handleStat = async (
       if (cached) { sendSuccess(res, cached); return; }
     }
     const data = await compute();
-    cache.set(cacheKey, data);
+    cache.set(cacheKey, data, STATS_CACHE_TTL_MS);
     sendSuccess(res, data);
   } catch (error) {
     logger.error((error as Error).message);
@@ -37,7 +38,7 @@ const handleStat = async (
 
 async function computeOverview(userId: string) {
   const [facetResult] = await Question.aggregate([
-    { $match: { userId } },
+    ...userStatsStages(userId),
     {
       $facet: {
         byCategory: [
@@ -98,7 +99,7 @@ function computeStatusBreakdown<T extends string>(
 
 async function computeCategoryBreakdown(userId: string) {
   const pipeline = await Question.aggregate([
-    { $match: { userId, category: { $ne: null } } },
+    ...userStatsStages(userId, { category: { $ne: null } }),
     { $group: { _id: { category: "$category", status: "$status" }, count: { $sum: 1 } } },
   ]);
   return computeStatusBreakdown(pipeline, Object.values(PrepCategory), "category");
@@ -106,7 +107,7 @@ async function computeCategoryBreakdown(userId: string) {
 
 async function computeDifficultyBreakdown(userId: string) {
   const pipeline = await Question.aggregate([
-    { $match: { userId, difficulty: { $ne: null } } },
+    ...userStatsStages(userId, { difficulty: { $ne: null } }),
     { $group: { _id: { difficulty: "$difficulty", status: "$status" }, count: { $sum: 1 } } },
   ]);
   return computeStatusBreakdown(pipeline, Object.values(Difficulty), "difficulty");
@@ -122,6 +123,7 @@ async function computeTopicBreakdown(userId: string, category?: string) {
 
   return Question.aggregate([
     { $match: matchFilter },
+    STATS_PROJECT,
     { $unwind: "$topics" },
     { $group: { _id: "$topics", count: { $sum: 1 } } },
     { $sort: { count: -1 } },
@@ -140,6 +142,7 @@ async function computeDailyByCategory(userId: string, days: number, tz: string, 
 
   const daily = await Question.aggregate([
     { $match: match },
+    STATS_PROJECT,
     { $group: { _id: { date: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt", timezone: tz } }, category: "$category" }, count: { $sum: 1 } } },
     { $sort: { "_id.date": 1 } },
   ]);
@@ -174,45 +177,10 @@ async function computeDailyByCategory(userId: string, days: number, tz: string, 
 
 async function computeSourceBreakdown(userId: string) {
   const pipeline = await Question.aggregate([
-    { $match: { userId, source: { $nin: [null, ""] } } },
+    ...userStatsStages(userId, { source: { $nin: [null, ""] } }),
     { $group: { _id: { source: "$source", status: "$status" }, count: { $sum: 1 } } },
   ]);
   return computeStatusBreakdown(pipeline, Object.values(QuestionSource), "source");
-}
-
-async function computeBacklogAge(userId: string, category?: string) {
-  const match: Record<string, any> = { userId, status: QuestionStatus.Pending };
-  if (category) match.category = category;
-
-  const now = new Date();
-  const d7 = new Date(now.getTime() - 7 * 86400000);
-  const d14 = new Date(now.getTime() - 14 * 86400000);
-  const d28 = new Date(now.getTime() - 28 * 86400000);
-  const d90 = new Date(now.getTime() - 90 * 86400000);
-
-  const pipeline = await Question.aggregate([
-    { $match: match },
-    {
-      $addFields: {
-        ageBucket: {
-          $switch: {
-            branches: [
-              { case: { $gte: ["$createdAt", d7] }, then: "< 1 week" },
-              { case: { $gte: ["$createdAt", d14] }, then: "1–2 weeks" },
-              { case: { $gte: ["$createdAt", d28] }, then: "2–4 weeks" },
-              { case: { $gte: ["$createdAt", d90] }, then: "1–3 months" },
-            ],
-            default: "3+ months",
-          },
-        },
-      },
-    },
-    { $group: { _id: "$ageBucket", count: { $sum: 1 } } },
-  ]);
-
-  const labels = ["< 1 week", "1–2 weeks", "2–4 weeks", "1–3 months", "3+ months"];
-  const countMap = new Map(pipeline.map((r) => [r._id, r.count]));
-  return labels.map((label) => ({ label, count: countMap.get(label) || 0 }));
 }
 
 async function computeCompanyTagBreakdown(userId: string, category?: string) {
@@ -220,6 +188,7 @@ async function computeCompanyTagBreakdown(userId: string, category?: string) {
   if (category) match.category = category;
   return Question.aggregate([
     { $match: match },
+    STATS_PROJECT,
     { $unwind: "$companyTags" },
     { $group: { _id: "$companyTags", count: { $sum: 1 } } },
     { $sort: { count: -1 } },
@@ -230,7 +199,7 @@ async function computeCompanyTagBreakdown(userId: string, category?: string) {
 
 async function computeTagBreakdown(userId: string) {
   return Question.aggregate([
-    { $match: { userId, tags: { $exists: true, $ne: [] }, status: QuestionStatus.Solved } },
+    ...userStatsStages(userId, { tags: { $exists: true, $ne: [] }, status: QuestionStatus.Solved }),
     { $unwind: "$tags" },
     { $group: { _id: "$tags", count: { $sum: 1 } } },
     { $sort: { count: -1 } },
@@ -249,6 +218,7 @@ async function computeProgress(userId: string, days: number, tz: string, categor
 
   const solved = await Question.aggregate([
     { $match: match },
+    STATS_PROJECT,
     { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt", timezone: tz } }, count: { $sum: 1 } } },
     { $sort: { _id: 1 } },
   ]);
@@ -269,7 +239,7 @@ async function computeProgress(userId: string, days: number, tz: string, categor
 
 async function computeStreaks(userId: string, tz: string) {
   const solved = await Question.aggregate([
-    { $match: { userId, status: QuestionStatus.Solved, solvedAt: { $ne: null } } },
+    ...userStatsStages(userId, { status: QuestionStatus.Solved, solvedAt: { $ne: null } }),
     { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt", timezone: tz } } } },
     { $sort: { _id: 1 } },
   ]);
@@ -315,6 +285,7 @@ async function computeHeatmap(userId: string, year: number, tz: string) {
 
   const solved = await Question.aggregate([
     { $match: { userId, status: QuestionStatus.Solved, solvedAt: { $gte: startDate, $lt: endDate } } },
+    STATS_PROJECT,
     { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$solvedAt", timezone: tz } }, count: { $sum: 1 } } },
   ]);
 
@@ -333,6 +304,7 @@ async function computeWeeklyProgress(userId: string, weeks: number, tz: string, 
 
   const solved = await Question.aggregate([
     { $match: match },
+    STATS_PROJECT,
     { $group: { _id: { $dateToString: { format: "%G-W%V", date: "$solvedAt", timezone: tz } }, count: { $sum: 1 } } },
     { $sort: { _id: 1 } },
   ]);
@@ -369,6 +341,7 @@ async function computeCumulativeProgress(userId: string, days: number, tz: strin
 
   const [facetResult] = await Question.aggregate([
     { $match: match },
+    STATS_PROJECT,
     {
       $facet: {
         priorCount: [{ $match: { solvedAt: { $lt: startDate } } }, { $count: "count" }],
@@ -401,7 +374,7 @@ async function computeCumulativeProgress(userId: string, days: number, tz: strin
 
 async function computeDifficultyByCategory(userId: string) {
   const pipeline = await Question.aggregate([
-    { $match: { userId, category: { $ne: null }, difficulty: { $ne: null }, status: QuestionStatus.Solved } },
+    ...userStatsStages(userId, { category: { $ne: null }, difficulty: { $ne: null }, status: QuestionStatus.Solved }),
     { $group: { _id: { category: "$category", difficulty: "$difficulty" }, count: { $sum: 1 } } },
   ]);
 
@@ -458,7 +431,7 @@ async function computeInsights(userId: string, tz: string) {
   });
 
   const [facetResult] = await Question.aggregate([
-    { $match: { userId } },
+    ...userStatsStages(userId),
     {
       $facet: {
         catRows: [
@@ -757,7 +730,7 @@ export const getInsights = (req: AuthRequest, res: Response) => {
 
 async function computeBatchBreakdowns(userId: string) {
   const [f] = await Question.aggregate([
-    { $match: { userId } },
+    ...userStatsStages(userId),
     {
       $facet: {
         overviewByCat: [
@@ -834,7 +807,7 @@ async function computeBatchArrayFields(userId: string, category?: string) {
   if (category) companyMatch.category = category;
 
   const [f] = await Question.aggregate([
-    { $match: { userId, status: QuestionStatus.Solved } },
+    ...userStatsStages(userId, { status: QuestionStatus.Solved }),
     {
       $facet: {
         topics: [
@@ -880,6 +853,7 @@ async function computeBatchProgress(userId: string, tz: string, category?: strin
 
   const [f] = await Question.aggregate([
     { $match: match },
+    STATS_PROJECT,
     {
       $facet: {
         daily: [
@@ -954,7 +928,7 @@ async function computeBatchActivity(userId: string, year: number, tz: string) {
   const yearEnd = toMidnight(new Date(`${year + 1}-01-01T12:00:00Z`), tz);
 
   const [f] = await Question.aggregate([
-    { $match: { userId, status: QuestionStatus.Solved, solvedAt: { $ne: null } } },
+    ...userStatsStages(userId, { status: QuestionStatus.Solved, solvedAt: { $ne: null } }),
     {
       $facet: {
         heatmapRows: [
@@ -1050,7 +1024,7 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    cache.set(batchCacheKey, result);
+    cache.set(batchCacheKey, result, STATS_CACHE_TTL_MS);
     sendSuccess(res, result);
   } catch (error) {
     logger.error((error as Error).message);

@@ -19,7 +19,14 @@ export enum QuestionSource {
   GeeksforGeeks = "geeksforgeeks",
   Linkedin = "linkedin",
   Medium = "medium",
+  NamasteDSA = "namastedsa",
+  FMC = "fmc",
   Other = "other",
+}
+
+export interface ISolution {
+  label?: string;
+  content: string;
 }
 
 export interface IQuestion extends Document {
@@ -27,7 +34,7 @@ export interface IQuestion extends Document {
   category: PrepCategory | null;
   title: string;
   notes?: string;
-  solution?: string;
+  solutions?: ISolution[];
   status: QuestionStatus;
   difficulty?: Difficulty;
   topics: string[];

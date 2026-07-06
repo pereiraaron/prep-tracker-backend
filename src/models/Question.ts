@@ -1,6 +1,23 @@
 import { Schema, model } from "mongoose";
-import { IQuestion, QuestionStatus, Difficulty, QuestionSource } from "../types/question";
+import { IQuestion, ISolution, QuestionStatus, Difficulty, QuestionSource } from "../types/question";
 import { PrepCategory } from "../types/category";
+
+const solutionSchema = new Schema<ISolution>(
+  {
+    label: {
+      $type: String,
+      trim: true,
+      maxlength: 100,
+    },
+    content: {
+      $type: String,
+      trim: true,
+      required: true,
+      maxlength: 50000,
+    },
+  },
+  { _id: true, typeKey: "$type" }
+);
 
 const questionSchema = new Schema<IQuestion>(
   {
@@ -24,10 +41,10 @@ const questionSchema = new Schema<IQuestion>(
       trim: true,
       maxlength: 50000,
     },
-    solution: {
-      $type: String,
-      trim: true,
-      maxlength: 50000,
+    solutions: {
+      $type: [solutionSchema],
+      default: [],
+      validate: [(v: ISolution[]) => v.length <= 10, "Cannot have more than 10 solutions"],
     },
     status: {
       $type: String,
@@ -87,6 +104,9 @@ questionSchema.index({ userId: 1, starred: 1 });
 questionSchema.index({ userId: 1, topics: 1 });
 questionSchema.index({ userId: 1, difficulty: 1 });
 questionSchema.index({ userId: 1, source: 1 });
+questionSchema.index({ userId: 1, tags: 1 });
+questionSchema.index({ userId: 1, companyTags: 1 });
+questionSchema.index({ userId: 1, status: 1, category: 1 });
 questionSchema.index({ userId: 1, status: 1, solvedAt: 1 });
 questionSchema.index({ userId: 1, status: 1, createdAt: -1 });
 questionSchema.index(

@@ -18,7 +18,7 @@ npm run dev             # http://localhost:7002
 | `JWT_SECRET` | Yes | Secret for JWT verification |
 | `PORT` | No | Server port (default: 7002) |
 | `NODE_ENV` | No | `development` or `production` |
-| `CORS_ORIGIN` | No | Allowed origin (default: `*`) |
+| `RUN_MIGRATIONS` | No | Comma-separated migration keys to run on startup (e.g. `solutions_backfill`) |
 
 ## Scripts
 
@@ -34,13 +34,15 @@ npm run dev             # http://localhost:7002
 
 ## API Endpoints
 
-API docs available at `/api-docs` when server is running.
+API docs available at `/api/docs` when the server is running.
+
+All routes require `Authorization: Bearer <token>` unless noted otherwise.
 
 ### Questions (`/api/questions`)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/` | Create a solved question (requires `title`, `solution`, `category`) |
+| POST | `/` | Create a solved question (requires `title`, `solutions`, `category`) |
 | GET | `/` | List questions with filters, sorting, pagination |
 | GET | `/:id` | Get question by ID |
 | PUT | `/:id` | Update question |
@@ -48,10 +50,14 @@ API docs available at `/api-docs` when server is running.
 | PATCH | `/:id/solve` | Mark backlog question as solved |
 | PATCH | `/:id/reset` | Reset solved question to pending |
 | PATCH | `/:id/star` | Toggle starred |
-| GET | `/search` | Full-text search (`?q=`) |
+| GET | `/search` | Search questions (`?q=`) |
+| GET | `/suggestions` | Topic/tag/company suggestions for autocomplete |
 | POST | `/bulk-delete` | Delete multiple questions |
-| GET | `/backlog` | List backlog questions (no category) |
+| GET | `/backlog` | List backlog questions |
 | POST | `/backlog` | Create backlog question |
+| GET | `/:id/templates` | Get playground starter templates |
+| GET | `/:id/submission` | Get saved playground code |
+| PUT | `/:id/submission` | Save playground code |
 
 **Query filters:** `category`, `status`, `difficulty`, `topic`, `source`, `tag`, `companyTag`, `starred`, `backlog`, `solvedAfter`, `solvedBefore`, `createdAfter`, `createdBefore`, `sort`, `page`, `limit`
 
@@ -59,6 +65,7 @@ API docs available at `/api-docs` when server is running.
 
 | Endpoint | Chart Type | Description |
 |----------|------------|-------------|
+| GET `/batch` | Combined | Fetch multiple stats in one request (`?keys=`) |
 | GET `/overview` | Dashboard cards | Totals by status, category, difficulty |
 | GET `/categories` | Bar chart | Per-category completion rates |
 | GET `/difficulties` | Bar chart | Per-difficulty completion rates |
@@ -70,7 +77,8 @@ API docs available at `/api-docs` when server is running.
 | GET `/weekly-progress` | Bar chart | Weekly solved counts (`?weeks=12`) |
 | GET `/cumulative-progress` | Area chart | Running total over time (`?days=90`) |
 | GET `/heatmap` | Calendar heatmap | GitHub-style yearly grid (`?year=2026`) |
-| GET `/difficulty-by-category` | Stacked bar | Difficulty x category cross-tab |
+| GET `/difficulty-by-category` | Stacked bar | Difficulty × category cross-tab |
+| GET `/insights` | Tips & milestones | Personalized insights |
 
 ## Data Model
 
@@ -78,19 +86,34 @@ Single entity: **Question**
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `category` | enum / null | dsa, system_design, behavioral, machine_coding, language_framework, theory, quiz. `null` = backlog |
+| `category` | enum / null | `dsa`, `system_design`, `machine_coding`, `language_framework`, `theory`. `null` = backlog |
 | `title` | string | Question title |
 | `notes` | string | Personal notes |
-| `solution` | string | Solution code/text |
+| `solutions` | array | Solution entries — `{ label?, content }` (max 10). Multiple solutions allowed for `dsa` and `machine_coding` only |
 | `status` | enum | `pending` or `solved` |
-| `difficulty` | enum | easy, medium, hard |
-| `topic` | string | e.g. "Arrays", "Graph", "System Design" |
-| `source` | enum | leetcode, greatfrontend, geeksforgeeks, linkedin, medium, other |
+| `difficulty` | enum | `easy`, `medium`, `hard` |
+| `topics` | string[] | e.g. `arrays`, `graphs` (max 20, stored lowercase) |
+| `source` | enum | `leetcode`, `greatfrontend`, `minichallenges`, `geeksforgeeks`, `linkedin`, `medium`, `namastedsa`, `fmc`, `other` |
 | `url` | string | Problem URL |
 | `tags` | string[] | Custom tags (max 20) |
-| `companyTags` | string[] | Company names (max 20) |
+| `companyTags` | string[] | Company names (max 20, normalized on write to prevent case duplicates) |
 | `starred` | boolean | Bookmarked |
 | `solvedAt` | Date | When marked solved |
+
+### Solutions example
+
+```json
+{
+  "title": "Two Sum",
+  "category": "dsa",
+  "solutions": [
+    { "label": "Brute Force", "content": "function twoSum() { ... }" },
+    { "label": "Optimal", "content": "function twoSum() { ... }" }
+  ]
+}
+```
+
+Solution is optional for `system_design`, `theory`, and `language_framework` categories.
 
 ## Tech Stack
 

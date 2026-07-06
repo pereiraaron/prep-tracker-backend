@@ -35,7 +35,25 @@ const swaggerSpec = {
       },
       QuestionSource: {
         type: "string" as const,
-        enum: ["leetcode", "greatfrontend", "other"],
+        enum: [
+          "leetcode",
+          "greatfrontend",
+          "minichallenges",
+          "geeksforgeeks",
+          "linkedin",
+          "medium",
+          "namastedsa",
+          "fmc",
+          "other",
+        ],
+      },
+      Solution: {
+        type: "object" as const,
+        required: ["content"],
+        properties: {
+          label: { type: "string" as const, description: "Optional label, e.g. Brute Force or Optimal" },
+          content: { type: "string" as const, maxLength: 50000 },
+        },
       },
       Question: {
         type: "object" as const,
@@ -49,7 +67,11 @@ const swaggerSpec = {
           },
           title: { type: "string" as const },
           notes: { type: "string" as const },
-          solution: { type: "string" as const },
+          solutions: {
+            type: "array" as const,
+            maxItems: 10,
+            items: { $ref: "#/components/schemas/Solution" },
+          },
           status: { $ref: "#/components/schemas/QuestionStatus" },
           difficulty: { $ref: "#/components/schemas/Difficulty" },
           topics: { type: "array" as const, items: { type: "string" as const } },
@@ -65,11 +87,15 @@ const swaggerSpec = {
       },
       QuestionInput: {
         type: "object" as const,
-        required: ["title", "solution", "category"],
+        required: ["title", "solutions", "category"],
         properties: {
           title: { type: "string" as const },
           notes: { type: "string" as const },
-          solution: { type: "string" as const },
+          solutions: {
+            type: "array" as const,
+            maxItems: 10,
+            items: { $ref: "#/components/schemas/Solution" },
+          },
           difficulty: { $ref: "#/components/schemas/Difficulty" },
           topics: { type: "array" as const, items: { type: "string" as const } },
           source: { $ref: "#/components/schemas/QuestionSource" },
@@ -85,7 +111,11 @@ const swaggerSpec = {
         properties: {
           title: { type: "string" as const },
           notes: { type: "string" as const },
-          solution: { type: "string" as const },
+          solutions: {
+            type: "array" as const,
+            maxItems: 10,
+            items: { $ref: "#/components/schemas/Solution" },
+          },
           difficulty: { $ref: "#/components/schemas/Difficulty" },
           topics: { type: "array" as const, items: { type: "string" as const } },
           source: { $ref: "#/components/schemas/QuestionSource" },
@@ -373,7 +403,11 @@ const swaggerSpec = {
                 properties: {
                   title: { type: "string" as const },
                   notes: { type: "string" as const },
-                  solution: { type: "string" as const },
+                  solutions: {
+                    type: "array" as const,
+                    maxItems: 10,
+                    items: { $ref: "#/components/schemas/Solution" },
+                  },
                   difficulty: { $ref: "#/components/schemas/Difficulty" },
                   topics: { type: "array" as const, items: { type: "string" as const } },
                   source: { type: "string" as const },

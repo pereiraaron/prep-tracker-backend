@@ -19,7 +19,6 @@ import { PrepCategory } from "../../types/category";
 jest.mock("../../models/Question", () => ({
   Question: {
     aggregate: jest.fn(),
-    countDocuments: jest.fn(),
   },
 }));
 

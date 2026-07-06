@@ -22,9 +22,8 @@ jest.mock("../../models/Question", () => ({
     findOneAndDelete: jest.fn(),
     findOneAndUpdate: jest.fn(),
     exists: jest.fn(),
-    find: jest.fn(),
+    aggregate: jest.fn(),
     deleteMany: jest.fn(),
-    countDocuments: jest.fn(),
   },
 }));
 
@@ -58,33 +57,13 @@ const mockQuestionDoc = (overrides: Record<string, any> = {}) => ({
   userId: "user1",
   title: "Two Sum",
   notes: "use hashmap",
-  solution: "function twoSum() {}",
+  solutions: [{ content: "function twoSum() {}" }],
   status: QuestionStatus.Pending,
   starred: false,
   tags: [],
   solvedAt: undefined as Date | undefined,
   save: jest.fn().mockResolvedValue(undefined),
   ...overrides,
-});
-
-const mockFindChain = (result: any) => ({
-  sort: jest.fn().mockReturnValue({
-    skip: jest.fn().mockReturnValue({
-      limit: jest.fn().mockReturnValue({
-        lean: jest.fn().mockResolvedValue(result),
-      }),
-    }),
-  }),
-});
-
-const mockFindWithProjectionChain = (result: any) => ({
-  sort: jest.fn().mockReturnValue({
-    skip: jest.fn().mockReturnValue({
-      limit: jest.fn().mockReturnValue({
-        lean: jest.fn().mockResolvedValue(result),
-      }),
-    }),
-  }),
 });
 
 const mockFindOneAndUpdateChain = (result: any) => ({
@@ -95,6 +74,10 @@ const mockFindOneChain = (result: any) => ({
   lean: jest.fn().mockResolvedValue(result),
 });
 
+const mockPaginatedAggregate = (items: any[], total = items.length) => {
+  (Question.aggregate as jest.Mock).mockResolvedValue([{ data: items, total: [{ count: total }] }]);
+};
+
 beforeEach(() => jest.clearAllMocks());
 
 // ---- createQuestion ----
@@ -104,7 +87,12 @@ describe("createQuestion", () => {
     (Question.create as jest.Mock).mockResolvedValue({ ...question, toObject: () => question });
 
     const req = mockReq({
-      body: { title: "Two Sum", solution: "function twoSum() {}", topics: ["arrays"], category: "dsa" },
+      body: {
+        title: "Two Sum",
+        solutions: [{ content: "function twoSum() {}" }],
+        topics: ["arrays"],
+        category: "dsa",
+      },
     });
     const res = mockRes();
 
@@ -117,14 +105,64 @@ describe("createQuestion", () => {
         category: "dsa",
         status: QuestionStatus.Solved,
         solvedAt: expect.any(Date),
+        solutions: [{ content: "function twoSum() {}" }],
       })
     );
+  });
+
+  it("creates a solved question with multiple solutions", async () => {
+    const question = mockQuestionDoc({ status: QuestionStatus.Solved });
+    (Question.create as jest.Mock).mockResolvedValue({ ...question, toObject: () => question });
+
+    const req = mockReq({
+      body: {
+        title: "Two Sum",
+        solutions: [
+          { label: "Brute Force", content: "function twoSumBrute() {}" },
+          { label: "Optimal", content: "function twoSum() {}" },
+        ],
+        category: "dsa",
+      },
+    });
+    const res = mockRes();
+
+    await createQuestion(req, res);
+
+    expect(Question.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        solutions: [
+          { label: "Brute Force", content: "function twoSumBrute() {}" },
+          { label: "Optimal", content: "function twoSum() {}" },
+        ],
+      })
+    );
+  });
+
+  it("rejects multiple solutions for non-DSA categories", async () => {
+    const req = mockReq({
+      body: {
+        title: "Design Twitter",
+        solutions: [
+          { content: "approach 1" },
+          { content: "approach 2" },
+        ],
+        category: "system_design",
+      },
+    });
+    const res = mockRes();
+
+    await createQuestion(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(Question.create).not.toHaveBeenCalled();
   });
 
   it("returns 500 on error", async () => {
     (Question.create as jest.Mock).mockRejectedValue(new Error("db error"));
 
-    const req = mockReq({ body: { title: "Test", solution: "sol", category: "dsa" } });
+    const req = mockReq({
+      body: { title: "Test", solutions: [{ content: "sol" }], category: "dsa" },
+    });
     const res = mockRes();
 
     await createQuestion(req, res);
@@ -137,8 +175,7 @@ describe("createQuestion", () => {
 describe("getAllQuestions", () => {
   it("returns paginated questions", async () => {
     const questions = [mockQuestionDoc()];
-    (Question.find as jest.Mock).mockReturnValue(mockFindChain(questions));
-    (Question.countDocuments as jest.Mock).mockResolvedValue(1);
+    mockPaginatedAggregate(questions, 1);
 
     const req = mockReq();
     const res = mockRes();
@@ -152,30 +189,28 @@ describe("getAllQuestions", () => {
   });
 
   it("applies backlog filter", async () => {
-    (Question.find as jest.Mock).mockReturnValue(mockFindChain([]));
-    (Question.countDocuments as jest.Mock).mockResolvedValue(0);
+    mockPaginatedAggregate([], 0);
 
     const req = mockReq({ query: { backlog: "true", starred: "true" } });
     const res = mockRes();
 
     await getAllQuestions(req, res);
 
-    const findFilter = (Question.find as jest.Mock).mock.calls[0][0];
-    expect(findFilter.status).toBe(QuestionStatus.Pending);
-    expect(findFilter.starred).toBe(true);
+    const pipeline = (Question.aggregate as jest.Mock).mock.calls[0][0];
+    expect(pipeline[0].$match.status).toBe(QuestionStatus.Pending);
+    expect(pipeline[0].$match.starred).toBe(true);
   });
 
   it("excludes backlog by default", async () => {
-    (Question.find as jest.Mock).mockReturnValue(mockFindChain([]));
-    (Question.countDocuments as jest.Mock).mockResolvedValue(0);
+    mockPaginatedAggregate([], 0);
 
     const req = mockReq();
     const res = mockRes();
 
     await getAllQuestions(req, res);
 
-    const findFilter = (Question.find as jest.Mock).mock.calls[0][0];
-    expect(findFilter.status).toBe(QuestionStatus.Solved);
+    const pipeline = (Question.aggregate as jest.Mock).mock.calls[0][0];
+    expect(pipeline[0].$match.status).toBe(QuestionStatus.Solved);
   });
 });
 
@@ -261,24 +296,35 @@ describe("deleteQuestion", () => {
 describe("solveQuestion", () => {
   it("solves question", async () => {
     const question = mockQuestionDoc({ status: QuestionStatus.Solved, solvedAt: new Date() });
+    (Question.findOne as jest.Mock).mockReturnValue(mockFindOneChain(mockQuestionDoc()));
     (Question.findOneAndUpdate as jest.Mock).mockReturnValue(mockFindOneAndUpdateChain(question));
 
-    const req = mockReq({ params: { id: "q1" } });
+    const req = mockReq({
+      params: { id: "q1" },
+      body: { solutions: [{ content: "function twoSum() {}" }] },
+    });
     const res = mockRes();
 
     await solveQuestion(req, res);
 
     expect(Question.findOneAndUpdate).toHaveBeenCalledWith(
-      { _id: "q1", userId: "user1", status: { $ne: QuestionStatus.Solved } },
-      { $set: { status: QuestionStatus.Solved, solvedAt: expect.any(Date) } },
+      { _id: "q1", userId: "user1" },
+      {
+        $set: {
+          status: QuestionStatus.Solved,
+          solvedAt: expect.any(Date),
+          solutions: [{ content: "function twoSum() {}" }],
+        },
+      },
       { new: true }
     );
     expect(res.status).toHaveBeenCalledWith(200);
   });
 
   it("returns 400 when already solved", async () => {
-    (Question.findOneAndUpdate as jest.Mock).mockReturnValue(mockFindOneAndUpdateChain(null));
-    (Question.exists as jest.Mock).mockResolvedValue({ _id: "q1" });
+    (Question.findOne as jest.Mock).mockReturnValue(
+      mockFindOneChain(mockQuestionDoc({ status: QuestionStatus.Solved }))
+    );
 
     const req = mockReq({ params: { id: "q1" } });
     const res = mockRes();
@@ -289,8 +335,7 @@ describe("solveQuestion", () => {
   });
 
   it("returns 404 when not found", async () => {
-    (Question.findOneAndUpdate as jest.Mock).mockReturnValue(mockFindOneAndUpdateChain(null));
-    (Question.exists as jest.Mock).mockResolvedValue(null);
+    (Question.findOne as jest.Mock).mockReturnValue(mockFindOneChain(null));
 
     const res = mockRes();
     await solveQuestion(mockReq({ params: { id: "x" } }), res);
@@ -359,15 +404,14 @@ describe("toggleStarred", () => {
 // ---- searchQuestions ----
 describe("searchQuestions", () => {
   it("searches questions", async () => {
-    (Question.find as jest.Mock).mockReturnValue(mockFindWithProjectionChain([]));
-    (Question.countDocuments as jest.Mock).mockResolvedValue(0);
+    mockPaginatedAggregate([], 0);
 
     const res = mockRes();
     await searchQuestions(mockReq({ query: { q: "Two Sum" } }), res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    const findFilter = (Question.find as jest.Mock).mock.calls[0][0];
-    expect(findFilter.$or).toEqual([
+    const pipeline = (Question.aggregate as jest.Mock).mock.calls[0][0];
+    expect(pipeline[0].$match.$or).toEqual([
       { title: { $regex: "Two Sum", $options: "i" } },
       { topics: { $regex: "Two Sum", $options: "i" } },
       { tags: { $regex: "Two Sum", $options: "i" } },
@@ -420,13 +464,13 @@ describe("createBacklogQuestion", () => {
 // ---- getBacklogQuestions ----
 describe("getBacklogQuestions", () => {
   it("filters by pending status", async () => {
-    (Question.find as jest.Mock).mockReturnValue(mockFindChain([]));
-    (Question.countDocuments as jest.Mock).mockResolvedValue(0);
+    mockPaginatedAggregate([], 0);
 
     const res = mockRes();
     await getBacklogQuestions(mockReq(), res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    expect((Question.find as jest.Mock).mock.calls[0][0].status).toBe(QuestionStatus.Pending);
+    const pipeline = (Question.aggregate as jest.Mock).mock.calls[0][0];
+    expect(pipeline[0].$match.status).toBe(QuestionStatus.Pending);
   });
 });
