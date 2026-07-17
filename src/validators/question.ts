@@ -3,6 +3,7 @@ import { Difficulty, QuestionSource } from "../types/question";
 import { PrepCategory, SOLUTION_OPTIONAL_CATEGORIES } from "../types/category";
 import { hasSolutionContent } from "../utils/solution";
 import { normalizeCompanyTags } from "../utils/companyTags";
+import { normalizeTags } from "../utils/tags";
 
 const objectId = z.string().regex(/^[a-f\d]{24}$/i, "Invalid ObjectId");
 
@@ -12,6 +13,11 @@ const companyTagsArray = z
   .array(z.string().trim().max(50))
   .max(20)
   .transform(normalizeCompanyTags);
+
+const tagsArray = z
+  .array(z.string().trim().max(50))
+  .max(20)
+  .transform(normalizeTags);
 
 const solutionItemSchema = z.object({
   label: z.string().trim().max(100).optional(),
@@ -28,7 +34,7 @@ export const createQuestionSchema = z.object({
   topics: lowercaseArray.optional(),
   source: z.enum(QuestionSource).optional(),
   url: z.url().max(2000).optional().or(z.literal("")),
-  tags: z.array(z.string().max(50)).max(20).optional(),
+  tags: tagsArray.optional(),
   companyTags: companyTagsArray.optional(),
   category: z.enum(PrepCategory),
 }).refine(
@@ -44,7 +50,7 @@ export const updateQuestionSchema = z.object({
   topics: lowercaseArray.nullable().optional(),
   source: z.enum(QuestionSource).nullable().optional(),
   url: z.url().max(2000).optional().or(z.literal("")).nullable(),
-  tags: z.array(z.string().max(50)).max(20).optional(),
+  tags: tagsArray.optional(),
   companyTags: companyTagsArray.nullable().optional(),
   category: z.enum(PrepCategory).nullable().optional(),
 });
@@ -57,7 +63,7 @@ export const createBacklogQuestionSchema = z.object({
   topics: lowercaseArray.optional(),
   source: z.enum(QuestionSource).optional(),
   url: z.url("URL is required").max(2000),
-  tags: z.array(z.string().max(50)).max(20).optional(),
+  tags: tagsArray.optional(),
   companyTags: companyTagsArray.optional(),
   category: z.enum(PrepCategory),
 });

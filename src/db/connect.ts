@@ -1,6 +1,5 @@
 import mongoose from "mongoose";
 import { logger } from "../utils/logger";
-import { runMigrations } from "./migrations";
 
 let connectionPromise: Promise<void> | null = null;
 
@@ -23,7 +22,6 @@ export const connectToDB = () => {
       socketTimeoutMS: 45000,
     })
     .then(() => logger.info("MongoDB connected"))
-    .then(() => runMigrations())
     .catch((err) => {
       connectionPromise = null;
       logger.error("MongoDB connection error", { error: (err as Error).message });

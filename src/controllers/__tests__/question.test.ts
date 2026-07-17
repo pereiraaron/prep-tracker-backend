@@ -316,7 +316,7 @@ describe("solveQuestion", () => {
           solutions: [{ content: "function twoSum() {}" }],
         },
       },
-      { new: true }
+      { new: true, projection: expect.any(Object) }
     );
     expect(res.status).toHaveBeenCalledWith(200);
   });
@@ -358,7 +358,7 @@ describe("resetQuestion", () => {
     expect(Question.findOneAndUpdate).toHaveBeenCalledWith(
       { _id: "q1", userId: "user1", status: QuestionStatus.Solved },
       { $set: { status: QuestionStatus.Pending }, $unset: { solvedAt: 1 } },
-      { new: true }
+      { new: true, projection: expect.any(Object) }
     );
     expect(res.status).toHaveBeenCalledWith(200);
   });
@@ -386,7 +386,7 @@ describe("toggleStarred", () => {
     expect(Question.findOneAndUpdate).toHaveBeenCalledWith(
       { _id: "q1", userId: "user1" },
       [{ $set: { starred: { $not: "$starred" } } }],
-      { new: true }
+      { new: true, projection: expect.any(Object) }
     );
     expect(res.status).toHaveBeenCalledWith(200);
   });
@@ -403,7 +403,7 @@ describe("toggleStarred", () => {
 
 // ---- searchQuestions ----
 describe("searchQuestions", () => {
-  it("searches questions", async () => {
+  it("uses text index for word search", async () => {
     mockPaginatedAggregate([], 0);
 
     const res = mockRes();
@@ -411,11 +411,26 @@ describe("searchQuestions", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     const pipeline = (Question.aggregate as jest.Mock).mock.calls[0][0];
+    expect(pipeline[0].$match.$text).toEqual({ $search: "Two Sum" });
+    expect(pipeline[1].$facet.data[0].$sort).toEqual({
+      score: { $meta: "textScore" },
+      createdAt: -1,
+    });
+  });
+
+  it("uses regex for short substring search", async () => {
+    mockPaginatedAggregate([], 0);
+
+    const res = mockRes();
+    await searchQuestions(mockReq({ query: { q: "us" } }), res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const pipeline = (Question.aggregate as jest.Mock).mock.calls[0][0];
     expect(pipeline[0].$match.$or).toEqual([
-      { title: { $regex: "Two Sum", $options: "i" } },
-      { topics: { $regex: "Two Sum", $options: "i" } },
-      { tags: { $regex: "Two Sum", $options: "i" } },
-      { companyTags: { $regex: "Two Sum", $options: "i" } },
+      { title: { $regex: "us", $options: "i" } },
+      { topics: { $regex: "us", $options: "i" } },
+      { tags: { $regex: "us", $options: "i" } },
+      { companyTags: { $regex: "us", $options: "i" } },
     ]);
   });
 

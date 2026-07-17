@@ -16,7 +16,7 @@ export const STATS_FIELDS = {
 export const STATS_PROJECT: PipelineStage.Project = { $project: STATS_FIELDS };
 
 /** List view fields — inclusion projection avoids loading large solution/notes blobs. */
-const LIST_FIELDS = {
+export const LIST_FIELDS = {
   userId: 1,
   category: 1,
   title: 1,
@@ -35,6 +35,20 @@ const LIST_FIELDS = {
 
 export const LIST_PROJECT: PipelineStage.Project = { $project: LIST_FIELDS };
 
+/** Mongoose find/update projection (same fields as list responses). */
+export const LIST_PROJECTION = { ...LIST_FIELDS };
+
+/** Pick list-shaped fields from a full document (e.g. create response). */
+export const toListQuestion = (doc: object) => {
+  const source = doc as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  if (source._id !== undefined) out._id = source._id;
+  for (const key of Object.keys(LIST_FIELDS) as Array<keyof typeof LIST_FIELDS>) {
+    if (source[key as string] !== undefined) out[key as string] = source[key as string];
+  }
+  return out;
+};
+
 export const STATS_CACHE_TTL_MS = 600_000; // 10 minutes
 
 export const userStatsStages = (
@@ -49,19 +63,21 @@ type AggregateModel = {
   aggregate: (pipeline: PipelineStage[]) => Promise<Array<{ data: unknown[]; total: Array<{ count: number }> }>>;
 };
 
+type SortSpec = Record<string, 1 | -1 | { $meta: "textScore" }>;
+
 export const paginatedList = async <T>(
   model: AggregateModel,
   filter: Record<string, unknown>,
-  sort: Record<string, 1 | -1>,
+  sort: SortSpec,
   skip: number,
   limit: number
 ) => {
+  // Project only the page of docs (after sort/skip/limit), not the full match set
   const [result] = await model.aggregate([
     { $match: filter },
-    LIST_PROJECT,
     {
       $facet: {
-        data: [{ $sort: sort }, { $skip: skip }, { $limit: limit }],
+        data: [{ $sort: sort as PipelineStage.Sort["$sort"] }, { $skip: skip }, { $limit: limit }, LIST_PROJECT],
         total: [{ $count: "count" }],
       },
     },

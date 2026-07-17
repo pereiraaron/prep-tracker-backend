@@ -22,11 +22,11 @@ const handleStat = async (
 ) => {
   try {
     if (req.query.refresh !== "true") {
-      const cached = cache.get(cacheKey);
+      const cached = await cache.get(cacheKey);
       if (cached) { sendSuccess(res, cached); return; }
     }
     const data = await compute();
-    cache.set(cacheKey, data, STATS_CACHE_TTL_MS);
+    await cache.set(cacheKey, data, STATS_CACHE_TTL_MS);
     sendSuccess(res, data);
   } catch (error) {
     logger.error((error as Error).message);
@@ -670,7 +670,7 @@ export const getDailyByCategory = (req: AuthRequest, res: Response) => {
   const days = parseInt(req.query.days as string) || 14;
   const tz = getTz(req);
   const category = req.query.category as string | undefined;
-  const key = `stats:${userId}:dailyByCategory:${days}:${category || "all"}`;
+  const key = `stats:${userId}:dailyByCategory:${days}:${category || "all"}:${tz}`;
   return handleStat(req, res, key, () => computeDailyByCategory(userId, days, tz, category), "Error fetching daily by category");
 };
 
@@ -679,14 +679,14 @@ export const getProgress = (req: AuthRequest, res: Response) => {
   const days = parseInt(req.query.days as string) || 30;
   const tz = getTz(req);
   const category = req.query.category as string | undefined;
-  const key = `stats:${userId}:progress:${days}:${category || "all"}`;
+  const key = `stats:${userId}:progress:${days}:${category || "all"}:${tz}`;
   return handleStat(req, res, key, () => computeProgress(userId, days, tz, category), "Error fetching progress stats");
 };
 
 export const getStreaks = (req: AuthRequest, res: Response) => {
   const userId = req.user!.id;
   const tz = getTz(req);
-  return handleStat(req, res, `stats:${userId}:streaks`, () => computeStreaks(userId, tz), "Error fetching streak stats");
+  return handleStat(req, res, `stats:${userId}:streaks:${tz}`, () => computeStreaks(userId, tz), "Error fetching streak stats");
 };
 
 export const getHeatmap = (req: AuthRequest, res: Response) => {
@@ -694,7 +694,7 @@ export const getHeatmap = (req: AuthRequest, res: Response) => {
   const tz = getTz(req);
   const parsedYear = parseInt(req.query.year as string);
   const year = parsedYear >= 2000 && parsedYear <= 2100 ? parsedYear : new Date().getFullYear();
-  return handleStat(req, res, `stats:${userId}:heatmap:${year}`, () => computeHeatmap(userId, year, tz), "Error fetching heatmap stats");
+  return handleStat(req, res, `stats:${userId}:heatmap:${year}:${tz}`, () => computeHeatmap(userId, year, tz), "Error fetching heatmap stats");
 };
 
 export const getWeeklyProgress = (req: AuthRequest, res: Response) => {
@@ -702,7 +702,7 @@ export const getWeeklyProgress = (req: AuthRequest, res: Response) => {
   const weeks = parseInt(req.query.weeks as string) || 12;
   const tz = getTz(req);
   const category = req.query.category as string | undefined;
-  const key = `stats:${userId}:weeklyProgress:${weeks}:${category || "all"}`;
+  const key = `stats:${userId}:weeklyProgress:${weeks}:${category || "all"}:${tz}`;
   return handleStat(req, res, key, () => computeWeeklyProgress(userId, weeks, tz, category), "Error fetching weekly progress");
 };
 
@@ -711,7 +711,7 @@ export const getCumulativeProgress = (req: AuthRequest, res: Response) => {
   const days = parseInt(req.query.days as string) || 90;
   const tz = getTz(req);
   const category = req.query.category as string | undefined;
-  const key = `stats:${userId}:cumulativeProgress:${days}:${category || "all"}`;
+  const key = `stats:${userId}:cumulativeProgress:${days}:${category || "all"}:${tz}`;
   return handleStat(req, res, key, () => computeCumulativeProgress(userId, days, tz, category), "Error fetching cumulative progress");
 };
 
@@ -721,7 +721,7 @@ export const getDifficultyByCategory = (req: AuthRequest, res: Response) =>
 export const getInsights = (req: AuthRequest, res: Response) => {
   const userId = req.user!.id;
   const tz = getTz(req);
-  return handleStat(req, res, `stats:${userId}:insights`, () => computeInsights(userId, tz), "Error fetching insights");
+  return handleStat(req, res, `stats:${userId}:insights:${tz}`, () => computeInsights(userId, tz), "Error fetching insights");
 };
 
 // ---- Batch-optimized consolidated pipelines ----
@@ -988,9 +988,10 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
       : null;
 
     const category = req.query.category as string | undefined;
-    const batchCacheKey = `stats:${userId}:batch:${requestedKeys?.join(",") || "all"}:${category || "all"}`;
+    const year = new Date().getFullYear();
+    const batchCacheKey = `stats:${userId}:batch:${requestedKeys?.join(",") || "all"}:${category || "all"}:${tz}`;
     if (req.query.refresh !== "true") {
-      const cached = cache.get(batchCacheKey);
+      const cached = await cache.get(batchCacheKey);
       if (cached) { sendSuccess(res, cached); return; }
     }
     const shouldInclude = (key: string) => !requestedKeys || requestedKeys.includes(key);
@@ -1010,7 +1011,7 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
     if (PROGRESS_KEYS.some(shouldInclude))
       promises.push(computeBatchProgress(userId, tz, category));
     if (ACTIVITY_KEYS.some(shouldInclude))
-      promises.push(computeBatchActivity(userId, new Date().getFullYear(), tz));
+      promises.push(computeBatchActivity(userId, year, tz));
     if (shouldInclude("dailyByCategory"))
       promises.push(computeDailyByCategory(userId, 14, tz, category).then((d) => ({ dailyByCategory: d })));
     if (shouldInclude("insights"))
@@ -1024,7 +1025,28 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    cache.set(batchCacheKey, result, STATS_CACHE_TTL_MS);
+    await cache.set(batchCacheKey, result, STATS_CACHE_TTL_MS);
+
+    // Warm individual endpoint caches so /stats/overview etc. reuse this work
+    const cat = category || "all";
+    const warm: Array<Promise<void>> = [];
+    if (result.overview) warm.push(cache.set(`stats:${userId}:overview`, result.overview, STATS_CACHE_TTL_MS));
+    if (result.categories) warm.push(cache.set(`stats:${userId}:categories`, result.categories, STATS_CACHE_TTL_MS));
+    if (result.difficulties) warm.push(cache.set(`stats:${userId}:difficulties`, result.difficulties, STATS_CACHE_TTL_MS));
+    if (result.sources) warm.push(cache.set(`stats:${userId}:sources`, result.sources, STATS_CACHE_TTL_MS));
+    if (result.difficultyByCategory) warm.push(cache.set(`stats:${userId}:difficultyByCategory`, result.difficultyByCategory, STATS_CACHE_TTL_MS));
+    if (result.topics) warm.push(cache.set(`stats:${userId}:topics:${cat}`, result.topics, STATS_CACHE_TTL_MS));
+    if (result.companyTags) warm.push(cache.set(`stats:${userId}:companyTags`, result.companyTags, STATS_CACHE_TTL_MS));
+    if (result.tags) warm.push(cache.set(`stats:${userId}:tags`, result.tags, STATS_CACHE_TTL_MS));
+    if (result.streaks) warm.push(cache.set(`stats:${userId}:streaks:${tz}`, result.streaks, STATS_CACHE_TTL_MS));
+    if (result.insights) warm.push(cache.set(`stats:${userId}:insights:${tz}`, result.insights, STATS_CACHE_TTL_MS));
+    if (result.heatmap) warm.push(cache.set(`stats:${userId}:heatmap:${year}:${tz}`, result.heatmap, STATS_CACHE_TTL_MS));
+    if (result.progress) warm.push(cache.set(`stats:${userId}:progress:14:${cat}:${tz}`, result.progress, STATS_CACHE_TTL_MS));
+    if (result.weeklyProgress) warm.push(cache.set(`stats:${userId}:weeklyProgress:12:${cat}:${tz}`, result.weeklyProgress, STATS_CACHE_TTL_MS));
+    if (result.cumulativeProgress) warm.push(cache.set(`stats:${userId}:cumulativeProgress:90:${cat}:${tz}`, result.cumulativeProgress, STATS_CACHE_TTL_MS));
+    if (result.dailyByCategory) warm.push(cache.set(`stats:${userId}:dailyByCategory:14:${cat}:${tz}`, result.dailyByCategory, STATS_CACHE_TTL_MS));
+    await Promise.all(warm);
+
     sendSuccess(res, result);
   } catch (error) {
     logger.error((error as Error).message);

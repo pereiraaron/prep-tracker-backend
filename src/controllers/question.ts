@@ -6,24 +6,51 @@ import { PrepCategory, SOLUTION_OPTIONAL_CATEGORIES } from "../types/category";
 import { sendSuccess, sendPaginated, sendError } from "../utils/response";
 import { logger } from "../utils/logger";
 import { cache } from "../utils/cache";
-import { hasSolutionContent, normalizeSolutions, getMultipleSolutionsError, hasMultipleSolutions } from "../utils/solution";
-import { paginatedList, userStatsStages, STATS_CACHE_TTL_MS } from "../utils/aggregation";
+import {
+  hasSolutionContent,
+  normalizeSolutions,
+  getMultipleSolutionsError,
+  hasMultipleSolutions,
+} from "../utils/solution";
+import { paginatedList, userStatsStages, STATS_CACHE_TTL_MS, LIST_PROJECTION, toListQuestion } from "../utils/aggregation";
 
 // Granular cache invalidation groups
 const ALL_STATS = [
-  "overview", "categories", "difficulties", "topics", "sources", "companyTags",
-  "tags", "progress", "weeklyProgress", "cumulativeProgress", "heatmap",
-  "difficultyByCategory", "streaks", "insights", "batch",
+  "overview",
+  "categories",
+  "difficulties",
+  "topics",
+  "sources",
+  "companyTags",
+  "tags",
+  "progress",
+  "weeklyProgress",
+  "cumulativeProgress",
+  "heatmap",
+  "difficultyByCategory",
+  "streaks",
+  "insights",
+  "batch",
 ] as const;
 const BACKLOG_STATS = ["overview", "insights", "batch"] as const;
 const METADATA_STATS = [
-  "overview", "categories", "difficulties", "topics", "sources", "companyTags",
-  "tags", "difficultyByCategory", "insights", "batch",
+  "overview",
+  "categories",
+  "difficulties",
+  "topics",
+  "sources",
+  "companyTags",
+  "tags",
+  "difficultyByCategory",
+  "insights",
+  "batch",
 ] as const;
 
-const invalidateStats = (userId: string, keys: readonly string[]) => {
-  for (const key of keys) cache.invalidate(`stats:${userId}:${key}`);
-  cache.invalidate(`suggestions:${userId}`);
+const invalidateStats = async (userId: string, keys: readonly string[]) => {
+  await Promise.all([
+    ...keys.map((key) => cache.invalidate(`stats:${userId}:${key}`)),
+    cache.invalidate(`suggestions:v3:${userId}`),
+  ]);
 };
 
 // ---- CRUD ----
@@ -57,8 +84,8 @@ export const createQuestion = async (req: AuthRequest, res: Response) => {
       solvedAt: new Date(),
     });
 
-    invalidateStats(userId!, ALL_STATS);
-    sendSuccess(res, doc.toObject(), 201);
+    await invalidateStats(userId!, ALL_STATS);
+    sendSuccess(res, toListQuestion(doc.toObject()), 201);
   } catch (error) {
     logger.error((error as Error).message);
     sendError(res, "Error creating question");
@@ -192,23 +219,21 @@ export const updateQuestion = async (req: AuthRequest, res: Response) => {
 
     // Use aggregation pipeline update for conditional solvedAt
     const question = solutionAdded
-      ? await Question.findOneAndUpdate(
-          { _id: req.params.id, userId },
-          [{ $set }],
-          { new: true }
-        ).lean()
-      : await Question.findOneAndUpdate(
-          { _id: req.params.id, userId },
-          { $set },
-          { new: true }
-        ).lean();
+      ? await Question.findOneAndUpdate({ _id: req.params.id, userId }, [{ $set }], {
+          new: true,
+          projection: LIST_PROJECTION,
+        }).lean()
+      : await Question.findOneAndUpdate({ _id: req.params.id, userId }, { $set }, {
+          new: true,
+          projection: LIST_PROJECTION,
+        }).lean();
 
     if (!question) {
       sendError(res, "Question not found", 404);
       return;
     }
 
-    invalidateStats(userId!, solutionAdded ? ALL_STATS : METADATA_STATS);
+    await invalidateStats(userId!, solutionAdded ? ALL_STATS : METADATA_STATS);
     sendSuccess(res, question);
   } catch (error) {
     logger.error((error as Error).message);
@@ -226,7 +251,7 @@ export const deleteQuestion = async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    invalidateStats(userId!, ALL_STATS);
+    await invalidateStats(userId!, ALL_STATS);
     sendSuccess(res, { message: "Question deleted" });
   } catch (error) {
     logger.error((error as Error).message);
@@ -236,15 +261,23 @@ export const deleteQuestion = async (req: AuthRequest, res: Response) => {
 
 // ---- Solve ----
 
-
 export const solveQuestion = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
     const { solutions } = req.body;
 
-    const existing = await Question.findOne({ _id: req.params.id, userId }).lean();
-    if (!existing) { sendError(res, "Question not found", 404); return; }
-    if (existing.status === QuestionStatus.Solved) { sendError(res, "Question is already solved", 400); return; }
+    const existing = await Question.findOne(
+      { _id: req.params.id, userId },
+      { status: 1, category: 1 }
+    ).lean();
+    if (!existing) {
+      sendError(res, "Question not found", 404);
+      return;
+    }
+    if (existing.status === QuestionStatus.Solved) {
+      sendError(res, "Question is already solved", 400);
+      return;
+    }
 
     const solutionRequired = !SOLUTION_OPTIONAL_CATEGORIES.includes(existing.category as PrepCategory);
     if (solutionRequired && !hasSolutionContent({ solutions })) {
@@ -263,10 +296,10 @@ export const solveQuestion = async (req: AuthRequest, res: Response) => {
     const question = await Question.findOneAndUpdate(
       { _id: req.params.id, userId },
       { $set: { status: QuestionStatus.Solved, solvedAt: new Date(), ...normalizedSolutions } },
-      { new: true }
+      { new: true, projection: LIST_PROJECTION }
     ).lean();
 
-    invalidateStats(userId!, ALL_STATS);
+    await invalidateStats(userId!, ALL_STATS);
     sendSuccess(res, question);
   } catch (error) {
     logger.error((error as Error).message);
@@ -282,7 +315,7 @@ export const resetQuestion = async (req: AuthRequest, res: Response) => {
     const question = await Question.findOneAndUpdate(
       { _id: req.params.id, userId, status: QuestionStatus.Solved },
       { $set: { status: QuestionStatus.Pending }, $unset: { solvedAt: 1 } },
-      { new: true }
+      { new: true, projection: LIST_PROJECTION }
     ).lean();
 
     if (!question) {
@@ -295,7 +328,7 @@ export const resetQuestion = async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    invalidateStats(userId!, ALL_STATS);
+    await invalidateStats(userId!, ALL_STATS);
     sendSuccess(res, question);
   } catch (error) {
     logger.error((error as Error).message);
@@ -311,7 +344,7 @@ export const toggleStarred = async (req: AuthRequest, res: Response) => {
     const question = await Question.findOneAndUpdate(
       { _id: req.params.id, userId },
       [{ $set: { starred: { $not: "$starred" } } }],
-      { new: true }
+      { new: true, projection: LIST_PROJECTION }
     ).lean();
 
     if (!question) {
@@ -355,16 +388,28 @@ export const searchQuestions = async (req: AuthRequest, res: Response) => {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
     const skip = (page - 1) * limit;
 
-    // Case-insensitive regex search on title/topics/tags/companyTags
-    // (supports substring matches like "use" matching "useState")
-    const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const regex = { $regex: escaped, $options: "i" };
-    const searchFilter = {
-      userId,
-      $or: [{ title: regex }, { topics: regex }, { tags: regex }, { companyTags: regex }],
-      ...additionalFilters,
-    };
-    const { items: questions, total } = await paginatedList(Question, searchFilter, { createdAt: -1 }, skip, limit);
+    // Prefer text index for word/token search; regex for short/substring queries
+    const canUseTextIndex =
+      trimmed.length >= 3 && /^[a-zA-Z0-9][a-zA-Z0-9\s\-_]*$/.test(trimmed);
+
+    let searchFilter: Record<string, unknown>;
+    let sort: Record<string, 1 | -1 | { $meta: "textScore" }>;
+
+    if (canUseTextIndex) {
+      searchFilter = { userId, $text: { $search: trimmed }, ...additionalFilters };
+      sort = { score: { $meta: "textScore" }, createdAt: -1 };
+    } else {
+      const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = { $regex: escaped, $options: "i" };
+      searchFilter = {
+        userId,
+        $or: [{ title: regex }, { topics: regex }, { tags: regex }, { companyTags: regex }],
+        ...additionalFilters,
+      };
+      sort = { createdAt: -1 };
+    }
+
+    const { items: questions, total } = await paginatedList(Question, searchFilter, sort, skip, limit);
 
     sendPaginated(res, questions, { page, limit, total, totalPages: Math.ceil(total / limit) });
   } catch (error) {
@@ -387,7 +432,7 @@ export const bulkDeleteQuestions = async (req: AuthRequest, res: Response) => {
 
     const result = await Question.deleteMany({ _id: { $in: ids }, userId });
 
-    invalidateStats(userId!, ALL_STATS);
+    await invalidateStats(userId!, ALL_STATS);
     sendSuccess(res, {
       message: `Deleted ${result.deletedCount} questions`,
       deletedCount: result.deletedCount,
@@ -427,8 +472,8 @@ export const createBacklogQuestion = async (req: AuthRequest, res: Response) => 
       companyTags,
     });
 
-    invalidateStats(userId!, BACKLOG_STATS);
-    sendSuccess(res, doc.toObject(), 201);
+    await invalidateStats(userId!, BACKLOG_STATS);
+    sendSuccess(res, toListQuestion(doc.toObject()), 201);
   } catch (error) {
     logger.error((error as Error).message);
     sendError(res, "Error creating backlog question");
@@ -471,46 +516,19 @@ export const getBacklogQuestions = async (req: AuthRequest, res: Response) => {
 
 // ---- Suggestions ----
 
-// Default presets — shown to all users, user's frequently-used items are ranked first
-const DEFAULT_TOPICS: Record<string, string[]> = {
-  dsa: [
-    "arrays", "strings", "hash map", "two pointers", "sliding window",
-    "binary search", "linked list", "stack", "queue", "trees",
-    "binary trees", "bst", "graphs", "bfs", "dfs",
-    "dynamic programming", "recursion", "backtracking", "greedy",
-    "heap", "trie", "sorting", "math", "bit manipulation",
-  ],
-  system_design: [
-    "scalability", "load balancing", "caching", "database design",
-    "message queues", "microservices", "api design", "cdn",
-    "consistency", "availability", "rate limiting", "sharding",
-    "event-driven", "cap theorem", "sql vs nosql",
-  ],
-  machine_coding: [
-    "react", "vanilla js", "dom manipulation", "state management",
-    "event handling", "component design", "async patterns",
-    "debounce/throttle", "drag & drop", "virtual scrolling",
-    "form validation", "accessibility", "css layout", "canvas/svg",
-  ],
-  language_framework: [
-    "closures", "promises", "async/await", "prototypes",
-    "event loop", "hoisting", "scope", "generics",
-    "type system", "hooks", "context api", "middleware",
-    "decorators", "iterators", "modules",
-  ],
-  theory: [
-    "os concepts", "networking", "dbms", "oop",
-    "design patterns", "solid principles", "complexity analysis",
-    "concurrency", "memory management", "compilers",
-    "distributed systems",
-  ],
-};
-
 const DEFAULT_TAGS = [
-  "revisit", "tricky", "important", "weak-area", "interview-ready",
-  "needs-review", "blind-75", "neetcode-150", "top-interview",
-  "asked-in-interview", "one-liner", "follow-up",
+  "revisit",
+  "tricky",
+  "important",
+  "weak-area",
+  "interview-ready",
+  "needs-review",
+  "top-interview",
+  "asked-in-interview",
+  "follow-up",
 ];
+
+const SUGGESTION_CATEGORIES = Object.values(PrepCategory);
 
 const mergeDefaults = (userItems: string[], defaults: string[]): string[] => {
   const seen = new Set(userItems.map((s) => s.toLowerCase()));
@@ -526,9 +544,12 @@ const mergeDefaults = (userItems: string[], defaults: string[]): string[] => {
 export const getSuggestions = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const cacheKey = `suggestions:${userId}`;
-    const cached = cache.get(cacheKey);
-    if (cached) { sendSuccess(res, cached); return; }
+    const cacheKey = `suggestions:v3:${userId}`;
+    const cached = await cache.get(cacheKey);
+    if (cached) {
+      sendSuccess(res, cached);
+      return;
+    }
 
     const [f] = await Question.aggregate([
       ...userStatsStages(userId!),
@@ -541,13 +562,38 @@ export const getSuggestions = async (req: AuthRequest, res: Response) => {
             { $sort: { count: -1 } },
             { $group: { _id: "$_id.category", topics: { $push: "$_id.topic" } } },
           ],
+          tagsByCategory: [
+            { $match: { tags: { $exists: true, $ne: [] }, category: { $ne: null } } },
+            { $unwind: "$tags" },
+            {
+              $group: {
+                _id: { category: "$category", tag: { $toLower: "$tags" } },
+                // Prefer canonical casing from normalizeTags (e.g. useState)
+                tag: { $first: "$tags" },
+                count: { $sum: 1 },
+              },
+            },
+            { $sort: { count: -1 } },
+            {
+              $group: {
+                _id: "$_id.category",
+                tags: { $push: "$tag" },
+              },
+            },
+          ],
           tags: [
             { $match: { tags: { $exists: true, $ne: [] } } },
             { $unwind: "$tags" },
-            { $group: { _id: { $toLower: "$tags" }, count: { $sum: 1 } } },
+            {
+              $group: {
+                _id: { $toLower: "$tags" },
+                tag: { $first: "$tags" },
+                count: { $sum: 1 },
+              },
+            },
             { $sort: { count: -1 } },
             { $limit: 50 },
-            { $project: { _id: 0, tag: "$_id" } },
+            { $project: { _id: 0, tag: 1 } },
           ],
           companyTags: [
             { $match: { companyTags: { $exists: true, $ne: [] } } },
@@ -574,19 +620,30 @@ export const getSuggestions = async (req: AuthRequest, res: Response) => {
     ]);
 
     const topicsByCategory: Record<string, string[]> = {};
-    for (const cat of Object.keys(DEFAULT_TOPICS)) {
-      const row = f.topicsByCategory.find((r: any) => r._id === cat);
-      const userTopics = row ? row.topics.slice(0, 40) : [];
-      topicsByCategory[cat] = mergeDefaults(userTopics, DEFAULT_TOPICS[cat]);
+    const tagsByCategory: Record<string, string[]> = {};
+
+    for (const cat of SUGGESTION_CATEGORIES) {
+      const topicRow = f.topicsByCategory.find((r: any) => r._id === cat);
+      // User topics only — no hardcoded topic presets
+      topicsByCategory[cat] = topicRow ? topicRow.topics.slice(0, 40) : [];
+
+      const tagRow = f.tagsByCategory.find((r: any) => r._id === cat);
+      const userTags = tagRow ? tagRow.tags.slice(0, 40) : [];
+      tagsByCategory[cat] = mergeDefaults(userTags, DEFAULT_TAGS);
     }
 
     const result = {
       topicsByCategory,
-      tags: mergeDefaults(f.tags.map((t: any) => t.tag), DEFAULT_TAGS),
+      tagsByCategory,
+      // Flat list kept for older clients — global defaults + top user tags
+      tags: mergeDefaults(
+        f.tags.map((t: any) => t.tag),
+        DEFAULT_TAGS
+      ),
       companyTags: f.companyTags.map((c: any) => c.company),
     };
 
-    cache.set(cacheKey, result, STATS_CACHE_TTL_MS);
+    await cache.set(cacheKey, result, STATS_CACHE_TTL_MS);
     sendSuccess(res, result);
   } catch (error) {
     logger.error((error as Error).message);

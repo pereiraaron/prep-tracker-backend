@@ -18,7 +18,8 @@ npm run dev             # http://localhost:7002
 | `JWT_SECRET` | Yes | Secret for JWT verification |
 | `PORT` | No | Server port (default: 7002) |
 | `NODE_ENV` | No | `development` or `production` |
-| `RUN_MIGRATIONS` | No | Comma-separated migration keys to run on startup (e.g. `solutions_backfill`) |
+| `UPSTASH_REDIS_REST_URL` | No | Upstash Redis REST URL (shared cache across serverless instances) |
+| `UPSTASH_REDIS_REST_TOKEN` | No | Upstash Redis REST token |
 
 ## Scripts
 
@@ -51,7 +52,7 @@ All routes require `Authorization: Bearer <token>` unless noted otherwise.
 | PATCH | `/:id/reset` | Reset solved question to pending |
 | PATCH | `/:id/star` | Toggle starred |
 | GET | `/search` | Search questions (`?q=`) |
-| GET | `/suggestions` | Topic/tag/company suggestions for autocomplete |
+| GET | `/suggestions` | Category-scoped topic/tag presets + company suggestions for autocomplete |
 | POST | `/bulk-delete` | Delete multiple questions |
 | GET | `/backlog` | List backlog questions |
 | POST | `/backlog` | Create backlog question |
@@ -95,7 +96,7 @@ Single entity: **Question**
 | `topics` | string[] | e.g. `arrays`, `graphs` (max 20, stored lowercase) |
 | `source` | enum | `leetcode`, `greatfrontend`, `minichallenges`, `geeksforgeeks`, `linkedin`, `medium`, `namastedsa`, `fmc`, `other` |
 | `url` | string | Problem URL |
-| `tags` | string[] | Custom tags (max 20) |
+| `tags` | string[] | Custom tags (max 20, lowercased on write; known terms like `useState` keep canonical casing) |
 | `companyTags` | string[] | Company names (max 20, normalized on write to prevent case duplicates) |
 | `starred` | boolean | Bookmarked |
 | `solvedAt` | Date | When marked solved |

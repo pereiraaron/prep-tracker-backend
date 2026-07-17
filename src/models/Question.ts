@@ -98,9 +98,7 @@ const questionSchema = new Schema<IQuestion>(
 );
 
 questionSchema.index({ userId: 1, category: 1 });
-questionSchema.index({ userId: 1, status: 1 });
 questionSchema.index({ userId: 1, solvedAt: 1 });
-questionSchema.index({ userId: 1, starred: 1 });
 questionSchema.index({ userId: 1, topics: 1 });
 questionSchema.index({ userId: 1, difficulty: 1 });
 questionSchema.index({ userId: 1, source: 1 });
@@ -109,6 +107,9 @@ questionSchema.index({ userId: 1, companyTags: 1 });
 questionSchema.index({ userId: 1, status: 1, category: 1 });
 questionSchema.index({ userId: 1, status: 1, solvedAt: 1 });
 questionSchema.index({ userId: 1, status: 1, createdAt: -1 });
+questionSchema.index({ userId: 1, status: 1, updatedAt: -1 });
+questionSchema.index({ userId: 1, status: 1, title: 1 });
+questionSchema.index({ userId: 1, status: 1, starred: 1, createdAt: -1 });
 questionSchema.index(
   { title: "text", topics: "text", tags: "text", companyTags: "text" },
   { name: "question_text_search" }
