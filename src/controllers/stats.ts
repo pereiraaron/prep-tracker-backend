@@ -8,6 +8,10 @@ import { sendSuccess, sendError } from "../utils/response";
 import { logger } from "../utils/logger";
 import { cache } from "../utils/cache";
 import { STATS_PROJECT, STATS_CACHE_TTL_MS, userStatsStages } from "../utils/aggregation";
+import {
+  computeApplicationStats,
+  computeInterviewStats,
+} from "./interviewStats";
 
 // ---- Helpers ----
 
@@ -1016,6 +1020,10 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
       promises.push(computeDailyByCategory(userId, 14, tz, category).then((d) => ({ dailyByCategory: d })));
     if (shouldInclude("insights"))
       promises.push(computeInsights(userId, tz).then((d) => ({ insights: d })));
+    if (shouldInclude("applications"))
+      promises.push(computeApplicationStats(userId).then((d) => ({ applications: d })));
+    if (shouldInclude("interviews"))
+      promises.push(computeInterviewStats(userId).then((d) => ({ interviews: d })));
 
     const groups = await Promise.all(promises);
     const result: Record<string, any> = {};
@@ -1045,6 +1053,8 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
     if (result.weeklyProgress) warm.push(cache.set(`stats:${userId}:weeklyProgress:12:${cat}:${tz}`, result.weeklyProgress, STATS_CACHE_TTL_MS));
     if (result.cumulativeProgress) warm.push(cache.set(`stats:${userId}:cumulativeProgress:90:${cat}:${tz}`, result.cumulativeProgress, STATS_CACHE_TTL_MS));
     if (result.dailyByCategory) warm.push(cache.set(`stats:${userId}:dailyByCategory:14:${cat}:${tz}`, result.dailyByCategory, STATS_CACHE_TTL_MS));
+    if (result.applications) warm.push(cache.set(`stats:${userId}:applications`, result.applications, STATS_CACHE_TTL_MS));
+    if (result.interviews) warm.push(cache.set(`stats:${userId}:interviews`, result.interviews, STATS_CACHE_TTL_MS));
     await Promise.all(warm);
 
     sendSuccess(res, result);

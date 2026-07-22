@@ -12,6 +12,8 @@ import { logger } from "./utils/logger";
 import swaggerSpec from "./swagger";
 import questionRoutes from "./routes/question";
 import statsRoutes from "./routes/stats";
+import applicationRoutes from "./routes/application";
+import interviewRoutes from "./routes/interview";
 
 dotenv.config();
 
@@ -97,6 +99,8 @@ app.use(async (_req, _res, next) => {
 // Routes
 app.use("/api/questions", questionRoutes);
 app.use("/api/stats", statsRoutes);
+app.use("/api/applications", applicationRoutes);
+app.use("/api/interviews", interviewRoutes);
 
 // Health check
 app.get("/", async (_, res) => {

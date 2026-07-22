@@ -47,6 +47,117 @@ const swaggerSpec = {
           "other",
         ],
       },
+      ApplicationStatus: {
+        type: "string" as const,
+        enum: ["wishlist", "applied", "interviewing", "offer", "rejected", "withdrawn", "ghosted"],
+      },
+      ApplicationSource: {
+        type: "string" as const,
+        enum: [
+          "referral",
+          "linkedin",
+          "company_site",
+          "recruiter",
+          "cold_email",
+          "third_party",
+          "other",
+        ],
+      },
+      InterviewType: {
+        type: "string" as const,
+        enum: [
+          "recruiter_screen",
+          "phone",
+          "technical",
+          "system_design",
+          "behavioral",
+          "hiring_manager",
+          "onsite",
+          "final",
+          "other",
+        ],
+      },
+      InterviewStatus: {
+        type: "string" as const,
+        enum: ["scheduled", "completed", "cancelled", "no_show", "rescheduled"],
+      },
+      InterviewOutcome: {
+        type: "string" as const,
+        enum: ["awaiting", "advanced", "offer", "rejected", "ghosted", "withdrawn"],
+      },
+      ThirdPartyDetails: {
+        type: "object" as const,
+        required: ["company"],
+        properties: {
+          company: { type: "string" as const, description: "Agency / platform name" },
+          contactName: { type: "string" as const },
+          contactEmail: { type: "string" as const },
+          contactPhone: { type: "string" as const },
+          portalUrl: { type: "string" as const },
+          notes: { type: "string" as const },
+        },
+      },
+      OfferDetails: {
+        type: "object" as const,
+        properties: {
+          baseComp: { type: "string" as const },
+          equity: { type: "string" as const },
+          bonus: { type: "string" as const },
+          deadline: { type: "string" as const, format: "date-time" },
+          notes: { type: "string" as const },
+        },
+      },
+      Application: {
+        type: "object" as const,
+        properties: {
+          id: { type: "string" as const },
+          userId: { type: "string" as const },
+          company: { type: "string" as const },
+          role: { type: "string" as const },
+          status: { $ref: "#/components/schemas/ApplicationStatus" },
+          source: { $ref: "#/components/schemas/ApplicationSource" },
+          thirdParty: { $ref: "#/components/schemas/ThirdPartyDetails" },
+          jobUrl: { type: "string" as const },
+          location: { type: "string" as const },
+          salaryRange: { type: "string" as const },
+          notes: { type: "string" as const },
+          appliedAt: { type: "string" as const, format: "date-time" },
+          closedAt: { type: "string" as const, format: "date-time", nullable: true },
+          starred: { type: "boolean" as const },
+          priority: { type: "integer" as const },
+          offer: { $ref: "#/components/schemas/OfferDetails" },
+          archivedAt: { type: "string" as const, format: "date-time", nullable: true },
+          createdAt: { type: "string" as const, format: "date-time" },
+          updatedAt: { type: "string" as const, format: "date-time" },
+        },
+      },
+      Interview: {
+        type: "object" as const,
+        properties: {
+          id: { type: "string" as const },
+          userId: { type: "string" as const },
+          applicationId: { type: "string" as const },
+          company: { type: "string" as const },
+          role: { type: "string" as const },
+          round: { type: "integer" as const },
+          type: { $ref: "#/components/schemas/InterviewType" },
+          status: { $ref: "#/components/schemas/InterviewStatus" },
+          outcome: { $ref: "#/components/schemas/InterviewOutcome" },
+          scheduledAt: { type: "string" as const, format: "date-time" },
+          durationMins: { type: "integer" as const },
+          timezone: { type: "string" as const },
+          interviewers: { type: "array" as const, items: { type: "string" as const } },
+          location: { type: "string" as const },
+          notes: { type: "string" as const },
+          outcomeNotes: { type: "string" as const },
+          questionIds: { type: "array" as const, items: { type: "string" as const } },
+          loopId: { type: "string" as const },
+          completedAt: { type: "string" as const, format: "date-time" },
+          rescheduledToId: { type: "string" as const },
+          createdAt: { type: "string" as const, format: "date-time" },
+          updatedAt: { type: "string" as const, format: "date-time" },
+        },
+      },
       Solution: {
         type: "object" as const,
         required: ["content"],
@@ -904,10 +1015,417 @@ const swaggerSpec = {
         },
       },
     },
+    "/api/applications": {
+      get: {
+        tags: ["Applications"],
+        summary: "List applications",
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: "status", in: "query", schema: { $ref: "#/components/schemas/ApplicationStatus" } },
+          { name: "source", in: "query", schema: { $ref: "#/components/schemas/ApplicationSource" } },
+          { name: "company", in: "query", schema: { type: "string" as const } },
+          { name: "starred", in: "query", schema: { type: "string" as const, enum: ["true"] } },
+          { name: "includeArchived", in: "query", schema: { type: "string" as const, enum: ["true"] } },
+          { name: "archived", in: "query", schema: { type: "string" as const, enum: ["true"] } },
+          { name: "sort", in: "query", schema: { type: "string" as const }, description: "priority|-updatedAt|…" },
+          { name: "page", in: "query", schema: { type: "integer" as const } },
+          { name: "limit", in: "query", schema: { type: "integer" as const } },
+        ],
+        responses: { "200": { description: "Paginated applications" } },
+      },
+      post: {
+        tags: ["Applications"],
+        summary: "Create application",
+        security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object" as const,
+                required: ["company", "role"],
+                properties: {
+                  company: { type: "string" as const },
+                  role: { type: "string" as const },
+                  status: { $ref: "#/components/schemas/ApplicationStatus" },
+                  source: { $ref: "#/components/schemas/ApplicationSource" },
+                  thirdParty: { $ref: "#/components/schemas/ThirdPartyDetails" },
+                  jobUrl: { type: "string" as const },
+                  location: { type: "string" as const },
+                  salaryRange: { type: "string" as const },
+                  notes: { type: "string" as const },
+                  appliedAt: { type: "string" as const, format: "date-time" },
+                  starred: { type: "boolean" as const },
+                  priority: { type: "integer" as const },
+                  offer: { $ref: "#/components/schemas/OfferDetails" },
+                },
+              },
+            },
+          },
+        },
+        responses: { "201": { description: "Created application" } },
+      },
+    },
+    "/api/applications/reorder": {
+      post: {
+        tags: ["Applications"],
+        summary: "Reorder active applications by priority",
+        security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object" as const,
+                required: ["ids"],
+                properties: {
+                  ids: { type: "array" as const, items: { type: "string" as const } },
+                },
+              },
+            },
+          },
+        },
+        responses: { "200": { description: "Reordered list" } },
+      },
+    },
+    "/api/applications/bulk-archive": {
+      post: {
+        tags: ["Applications"],
+        summary: "Bulk archive applications",
+        security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object" as const,
+                required: ["ids"],
+                properties: {
+                  ids: { type: "array" as const, items: { type: "string" as const } },
+                },
+              },
+            },
+          },
+        },
+        responses: { "200": { description: "Archive count" } },
+      },
+    },
+    "/api/applications/{id}": {
+      get: {
+        tags: ["Applications"],
+        summary: "Get application with interviews",
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: "id", in: "path", required: true, schema: { type: "string" as const } },
+          { name: "includeArchived", in: "query", schema: { type: "string" as const, enum: ["true"] } },
+        ],
+        responses: { "200": { description: "Application detail" } },
+      },
+      put: {
+        tags: ["Applications"],
+        summary: "Update application",
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
+        responses: { "200": { description: "Updated application" } },
+      },
+      delete: {
+        tags: ["Applications"],
+        summary: "Archive application (soft) or hard-delete with ?hard=true",
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: "id", in: "path", required: true, schema: { type: "string" as const } },
+          { name: "hard", in: "query", schema: { type: "string" as const, enum: ["true"] } },
+        ],
+        responses: { "200": { description: "Archived or deleted" } },
+      },
+    },
+    "/api/applications/{id}/status": {
+      patch: {
+        tags: ["Applications"],
+        summary: "Update application pipeline status",
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object" as const,
+                required: ["status"],
+                properties: {
+                  status: { $ref: "#/components/schemas/ApplicationStatus" },
+                  closedAt: { type: "string" as const, format: "date-time" },
+                  offer: { $ref: "#/components/schemas/OfferDetails" },
+                },
+              },
+            },
+          },
+        },
+        responses: { "200": { description: "Updated status" } },
+      },
+    },
+    "/api/applications/{id}/star": {
+      patch: {
+        tags: ["Applications"],
+        summary: "Toggle starred",
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
+        responses: { "200": { description: "Toggled" } },
+      },
+    },
+    "/api/applications/{id}/archive": {
+      patch: {
+        tags: ["Applications"],
+        summary: "Archive application",
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
+        responses: { "200": { description: "Archived" } },
+      },
+    },
+    "/api/applications/{id}/restore": {
+      patch: {
+        tags: ["Applications"],
+        summary: "Restore archived application",
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
+        responses: { "200": { description: "Restored" } },
+      },
+    },
+    "/api/interviews": {
+      get: {
+        tags: ["Interviews"],
+        summary: "List interviews",
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: "applicationId", in: "query", schema: { type: "string" as const } },
+          { name: "status", in: "query", schema: { $ref: "#/components/schemas/InterviewStatus" } },
+          { name: "outcome", in: "query", schema: { $ref: "#/components/schemas/InterviewOutcome" } },
+          { name: "type", in: "query", schema: { $ref: "#/components/schemas/InterviewType" } },
+          { name: "company", in: "query", schema: { type: "string" as const } },
+          { name: "loopId", in: "query", schema: { type: "string" as const } },
+          { name: "upcoming", in: "query", schema: { type: "string" as const, enum: ["true"] } },
+          { name: "scheduledAfter", in: "query", schema: { type: "string" as const, format: "date-time" } },
+          { name: "scheduledBefore", in: "query", schema: { type: "string" as const, format: "date-time" } },
+          { name: "sort", in: "query", schema: { type: "string" as const } },
+          { name: "page", in: "query", schema: { type: "integer" as const } },
+          { name: "limit", in: "query", schema: { type: "integer" as const } },
+        ],
+        responses: { "200": { description: "Paginated interviews" } },
+      },
+      post: {
+        tags: ["Interviews"],
+        summary: "Create interview round",
+        security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object" as const,
+                required: ["applicationId", "type"],
+                properties: {
+                  applicationId: { type: "string" as const },
+                  round: { type: "integer" as const },
+                  type: { $ref: "#/components/schemas/InterviewType" },
+                  status: { $ref: "#/components/schemas/InterviewStatus" },
+                  outcome: { $ref: "#/components/schemas/InterviewOutcome" },
+                  scheduledAt: { type: "string" as const, format: "date-time" },
+                  durationMins: { type: "integer" as const },
+                  timezone: { type: "string" as const },
+                  interviewers: { type: "array" as const, items: { type: "string" as const } },
+                  location: { type: "string" as const },
+                  notes: { type: "string" as const },
+                  outcomeNotes: { type: "string" as const },
+                  questionIds: { type: "array" as const, items: { type: "string" as const } },
+                  loopId: { type: "string" as const },
+                },
+              },
+            },
+          },
+        },
+        responses: { "201": { description: "Created interview" } },
+      },
+    },
+    "/api/interviews/loop": {
+      post: {
+        tags: ["Interviews"],
+        summary: "Create same-day onsite loop (shared loopId)",
+        security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object" as const,
+                required: ["applicationId", "slots"],
+                properties: {
+                  applicationId: { type: "string" as const },
+                  timezone: { type: "string" as const },
+                  location: { type: "string" as const },
+                  notes: { type: "string" as const },
+                  slots: {
+                    type: "array" as const,
+                    items: {
+                      type: "object" as const,
+                      required: ["type", "scheduledAt"],
+                      properties: {
+                        type: { $ref: "#/components/schemas/InterviewType" },
+                        scheduledAt: { type: "string" as const, format: "date-time" },
+                        durationMins: { type: "integer" as const },
+                        interviewers: { type: "array" as const, items: { type: "string" as const } },
+                        location: { type: "string" as const },
+                        notes: { type: "string" as const },
+                        round: { type: "integer" as const },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: { "201": { description: "Created loop" } },
+      },
+    },
+    "/api/interviews/{id}": {
+      get: {
+        tags: ["Interviews"],
+        summary: "Get interview",
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
+        responses: { "200": { description: "Interview" } },
+      },
+      put: {
+        tags: ["Interviews"],
+        summary: "Update interview",
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
+        responses: { "200": { description: "Updated" } },
+      },
+      delete: {
+        tags: ["Interviews"],
+        summary: "Delete interview",
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
+        responses: { "200": { description: "Deleted" } },
+      },
+    },
+    "/api/interviews/{id}/complete": {
+      patch: {
+        tags: ["Interviews"],
+        summary: "Mark interview completed (default outcome: awaiting)",
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
+        requestBody: {
+          content: {
+            "application/json": {
+              schema: {
+                type: "object" as const,
+                properties: {
+                  outcome: { $ref: "#/components/schemas/InterviewOutcome" },
+                  outcomeNotes: { type: "string" as const },
+                  questionIds: { type: "array" as const, items: { type: "string" as const } },
+                  createNextRound: {
+                    type: "boolean" as const,
+                    description: "When outcome is advanced, auto-create the next round",
+                  },
+                  nextRoundType: { $ref: "#/components/schemas/InterviewType" },
+                  offer: { $ref: "#/components/schemas/OfferDetails" },
+                },
+              },
+            },
+          },
+        },
+        responses: { "200": { description: "{ interview, nextRound }" } },
+      },
+    },
+    "/api/interviews/{id}/outcome": {
+      patch: {
+        tags: ["Interviews"],
+        summary: "Set outcome on a completed interview (cascades application status)",
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object" as const,
+                required: ["outcome"],
+                properties: {
+                  outcome: { $ref: "#/components/schemas/InterviewOutcome" },
+                  outcomeNotes: { type: "string" as const },
+                  createNextRound: { type: "boolean" as const },
+                  nextRoundType: { $ref: "#/components/schemas/InterviewType" },
+                  offer: { $ref: "#/components/schemas/OfferDetails" },
+                },
+              },
+            },
+          },
+        },
+        responses: { "200": { description: "{ interview, nextRound }" } },
+      },
+    },
+    "/api/interviews/{id}/reschedule": {
+      patch: {
+        tags: ["Interviews"],
+        summary: "Reschedule: mark old as rescheduled, create replacement",
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" as const } }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object" as const,
+                required: ["scheduledAt"],
+                properties: {
+                  scheduledAt: { type: "string" as const, format: "date-time" },
+                  durationMins: { type: "integer" as const },
+                  timezone: { type: "string" as const },
+                  location: { type: "string" as const },
+                  notes: { type: "string" as const },
+                },
+              },
+            },
+          },
+        },
+        responses: { "200": { description: "Previous + new interview" } },
+      },
+    },
+    "/api/stats/applications": {
+      get: {
+        tags: ["Stats"],
+        summary: "Application pipeline stats",
+        security: [{ BearerAuth: [] }],
+        responses: { "200": { description: "Application stats" } },
+      },
+    },
+    "/api/stats/interviews": {
+      get: {
+        tags: ["Stats"],
+        summary: "Interview stats + upcoming list",
+        security: [{ BearerAuth: [] }],
+        responses: { "200": { description: "Interview stats" } },
+      },
+    },
+    "/api/stats/prep-for-company": {
+      get: {
+        tags: ["Stats"],
+        summary: "Prep questions tagged for a company (bridge to applications)",
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: "company", in: "query", required: true, schema: { type: "string" as const } },
+        ],
+        responses: { "200": { description: "Prep + applications for company" } },
+      },
+    },
   },
   tags: [
     { name: "Health", description: "Health check" },
     { name: "Questions", description: "Question CRUD, search, solve, tags, topics, sources" },
+    { name: "Applications", description: "Job application pipeline tracking" },
+    { name: "Interviews", description: "Interview rounds, outcomes, reschedule, onsite loops" },
     { name: "Stats", description: "Analytics and progress tracking" },
   ],
 };

@@ -18,10 +18,18 @@ import {
   getDailyByCategory,
   getBatch,
 } from "../controllers/stats";
+import {
+  getApplicationStats,
+  getInterviewStats,
+  getPrepForCompany,
+} from "../controllers/interviewStats";
 
 const router = Router();
 
 router.get("/batch", authenticate, getBatch);
+router.get("/applications", authenticate, getApplicationStats);
+router.get("/interviews", authenticate, getInterviewStats);
+router.get("/prep-for-company", authenticate, getPrepForCompany);
 router.get("/overview", authenticate, getOverview);
 router.get("/categories", authenticate, getCategoryBreakdown);
 router.get("/difficulties", authenticate, getDifficultyBreakdown);
