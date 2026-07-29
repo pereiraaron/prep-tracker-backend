@@ -13,7 +13,7 @@ import {
 import { IOfferDetails } from "../types/application";
 import { sendSuccess, sendPaginated, sendError } from "../utils/response";
 import { logger } from "../utils/logger";
-import { cache } from "../utils/cache";
+import { cache, userIndex } from "../utils/cache";
 import { normalizeCompanyTag } from "../utils/companyTags";
 import {
   assertApplicationActive,
@@ -23,10 +23,9 @@ import {
 } from "../utils/applicationPipeline";
 
 const invalidateInterviewStats = async (userId: string) => {
-  await Promise.all(
-    ["interviews", "applications", "batch"].map((key) =>
-      cache.invalidate(`stats:${userId}:${key}`)
-    )
+  await cache.invalidateMany(
+    ["interviews", "applications", "batch"].map((key) => `stats:${userId}:${key}`),
+    userIndex(userId)
   );
 };
 
@@ -552,14 +551,16 @@ export const createInterviewLoop = async (req: AuthRequest, res: Response) => {
     const loopId = new mongoose.Types.ObjectId().toString();
     let round = await nextRoundNumber(userId, applicationId);
 
-    const docs = [];
-    for (const slot of slots) {
-      const created = await Interview.create({
+    // Round numbers are assigned locally, so all slots insert in one round trip.
+    const pending = slots.map((slot) => {
+      const assignedRound = slot.round ?? round;
+      if (slot.round === undefined) round += 1;
+      return {
         userId,
         applicationId,
         company: application.company,
         role: application.role,
-        round: slot.round ?? round,
+        round: assignedRound,
         type: slot.type,
         status: InterviewStatus.Scheduled,
         scheduledAt: slot.scheduledAt,
@@ -570,10 +571,11 @@ export const createInterviewLoop = async (req: AuthRequest, res: Response) => {
         notes: slot.notes ?? notes,
         questionIds: [],
         loopId,
-      });
-      docs.push(created.toObject());
-      if (slot.round === undefined) round += 1;
-    }
+      };
+    });
+
+    const created = await Interview.insertMany(pending);
+    const docs = created.map((doc) => doc.toObject());
 
     await promoteApplicationToInterviewing(userId, applicationId);
     await invalidateInterviewStats(userId);

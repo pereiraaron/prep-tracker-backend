@@ -1,7 +1,8 @@
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 
-dotenv.config();
+// quiet: dotenv 17+ logs an injection banner on load by default
+dotenv.config({ quiet: true });
 
 /** Keep in sync with src/models/Question.ts */
 const QUESTION_INDEXES: Array<{
@@ -22,8 +23,8 @@ const QUESTION_INDEXES: Array<{
   { keys: { userId: 1, status: 1, title: 1 } },
   { keys: { userId: 1, status: 1, starred: 1, createdAt: -1 } },
   {
-    keys: { title: "text", topics: "text", tags: "text", companyTags: "text" },
-    options: { name: "question_text_search" },
+    keys: { userId: 1, title: "text", topics: "text", tags: "text", companyTags: "text" },
+    options: { name: "question_text_search_v2" },
   },
 ];
 
@@ -57,7 +58,9 @@ const STALE_INDEX_NAMES = [
   "userId_1_status_1",
   "userId_1_starred_1",
   "userId_1_topic_1",
-  // Old text index weighted `topic` instead of `topics`
+  // Older text indexes: weighted `topic` instead of `topics`, then missing the
+  // userId prefix. Only one text index is allowed per collection, so these must
+  // be dropped before question_text_search_v2 is created.
   "question_text_search",
 ];
 

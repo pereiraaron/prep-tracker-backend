@@ -9,15 +9,16 @@ import {
 } from "../types/application";
 import { sendSuccess, sendPaginated, sendError } from "../utils/response";
 import { logger } from "../utils/logger";
-import { cache } from "../utils/cache";
+import { cache, userIndex } from "../utils/cache";
 import { normalizeCompanyTag } from "../utils/companyTags";
 import { applyStatusSideEffects } from "../utils/applicationPipeline";
 
 const INTERVIEW_STATS_KEYS = ["interviews", "applications", "batch"] as const;
 
 const invalidateInterviewStats = async (userId: string) => {
-  await Promise.all(
-    INTERVIEW_STATS_KEYS.map((key) => cache.invalidate(`stats:${userId}:${key}`))
+  await cache.invalidateMany(
+    INTERVIEW_STATS_KEYS.map((key) => `stats:${userId}:${key}`),
+    userIndex(userId)
   );
 };
 

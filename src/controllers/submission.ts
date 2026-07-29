@@ -60,7 +60,7 @@ export const saveSubmission = async (req: AuthRequest, res: Response) => {
     const submission = await Submission.findOneAndUpdate(
       { userId, questionId: req.params.id },
       { $set: { files } },
-      { new: true, upsert: true }
+      { returnDocument: "after", upsert: true }
     ).lean();
 
     sendSuccess(res, { files: submission.files, updatedAt: submission.updatedAt });

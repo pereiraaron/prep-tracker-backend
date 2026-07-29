@@ -20,6 +20,7 @@ jest.mock("../../models/Application", () => ({
 jest.mock("../../models/Interview", () => ({
   Interview: {
     create: jest.fn(),
+    insertMany: jest.fn(),
     findOne: jest.fn(),
     find: jest.fn(),
     deleteOne: jest.fn(),
@@ -35,7 +36,9 @@ jest.mock("../../models/Question", () => ({
 jest.mock("../../utils/cache", () => ({
   cache: {
     invalidate: jest.fn(),
+    invalidateMany: jest.fn(),
   },
+  userIndex: (userId: string) => `cacheidx:${userId}`,
 }));
 
 const mockRes = () => {
@@ -332,8 +335,8 @@ describe("createInterviewLoop", () => {
         }),
       }),
     });
-    (Interview.create as jest.Mock).mockImplementation(async (data: any) =>
-      mockInterview({ ...data, _id: Math.random().toString(16).slice(2), id: "ix" })
+    (Interview.insertMany as jest.Mock).mockImplementation(async (docs: any[]) =>
+      docs.map((data, i) => mockInterview({ ...data, _id: `i${i}`, id: `i${i}` }))
     );
 
     const res = mockRes();
@@ -351,10 +354,16 @@ describe("createInterviewLoop", () => {
     );
 
     expect(res.status).toHaveBeenCalledWith(201);
-    expect(Interview.create).toHaveBeenCalledTimes(2);
-    const loopIds = (Interview.create as jest.Mock).mock.calls.map((c) => c[0].loopId);
-    expect(loopIds[0]).toBeTruthy();
-    expect(loopIds[0]).toBe(loopIds[1]);
+
+    // All slots insert in a single round trip
+    expect(Interview.insertMany).toHaveBeenCalledTimes(1);
+    const inserted = (Interview.insertMany as jest.Mock).mock.calls[0][0];
+    expect(inserted).toHaveLength(2);
+    expect(inserted[0].loopId).toBeTruthy();
+    expect(inserted[0].loopId).toBe(inserted[1].loopId);
+    // Rounds are still assigned incrementally
+    expect(inserted.map((d: any) => d.round)).toEqual([1, 2]);
+    expect(res.json.mock.calls[0][0].data.interviews).toHaveLength(2);
     expect(Question.countDocuments).not.toHaveBeenCalled();
   });
 });

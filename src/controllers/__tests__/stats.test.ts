@@ -26,8 +26,12 @@ jest.mock("../../utils/cache", () => ({
   cache: {
     get: jest.fn().mockReturnValue(null),
     set: jest.fn(),
+    setMany: jest.fn(),
+    del: jest.fn(),
     invalidate: jest.fn(),
+    invalidateMany: jest.fn(),
   },
+  userIndex: (userId: string) => `cacheidx:${userId}`,
 }));
 
 const mockRes = () => {

@@ -7,7 +7,7 @@ import { ApplicationStatus } from "../types/application";
 import { InterviewOutcome, InterviewStatus } from "../types/interview";
 import { sendSuccess, sendError } from "../utils/response";
 import { logger } from "../utils/logger";
-import { cache } from "../utils/cache";
+import { cache, userIndex } from "../utils/cache";
 import { STATS_CACHE_TTL_MS } from "../utils/aggregation";
 import { normalizeCompanyTag } from "../utils/companyTags";
 
@@ -27,7 +27,7 @@ const handleStat = async (
       }
     }
     const data = await compute();
-    await cache.set(cacheKey, data, STATS_CACHE_TTL_MS);
+    await cache.set(cacheKey, data, STATS_CACHE_TTL_MS, userIndex(req.user!.id));
     sendSuccess(res, data);
   } catch (error) {
     logger.error((error as Error).message);

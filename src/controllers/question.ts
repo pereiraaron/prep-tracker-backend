@@ -5,7 +5,7 @@ import { QuestionStatus } from "../types/question";
 import { PrepCategory, SOLUTION_OPTIONAL_CATEGORIES } from "../types/category";
 import { sendSuccess, sendPaginated, sendError } from "../utils/response";
 import { logger } from "../utils/logger";
-import { cache } from "../utils/cache";
+import { cache, userIndex } from "../utils/cache";
 import {
   hasSolutionContent,
   normalizeSolutions,
@@ -47,10 +47,12 @@ const METADATA_STATS = [
 ] as const;
 
 const invalidateStats = async (userId: string, keys: readonly string[]) => {
-  await Promise.all([
-    ...keys.map((key) => cache.invalidate(`stats:${userId}:${key}`)),
-    cache.invalidate(`suggestions:v3:${userId}`),
-  ]);
+  // One registry lookup covers every prefix — previously this was one keyspace
+  // SCAN loop per prefix, all awaited before the response was sent.
+  await cache.invalidateMany(
+    [...keys.map((key) => `stats:${userId}:${key}`), `suggestions:v3:${userId}`],
+    userIndex(userId)
+  );
 };
 
 // ---- CRUD ----
@@ -217,14 +219,16 @@ export const updateQuestion = async (req: AuthRequest, res: Response) => {
       $set.solvedAt = { $ifNull: ["$solvedAt", new Date()] };
     }
 
-    // Use aggregation pipeline update for conditional solvedAt
+    // Aggregation pipeline update for conditional solvedAt. Mongoose 9 rejects
+    // array updates unless updatePipeline is set.
     const question = solutionAdded
       ? await Question.findOneAndUpdate({ _id: req.params.id, userId }, [{ $set }], {
-          new: true,
+          returnDocument: "after",
           projection: LIST_PROJECTION,
+          updatePipeline: true,
         }).lean()
       : await Question.findOneAndUpdate({ _id: req.params.id, userId }, { $set }, {
-          new: true,
+          returnDocument: "after",
           projection: LIST_PROJECTION,
         }).lean();
 
@@ -296,7 +300,7 @@ export const solveQuestion = async (req: AuthRequest, res: Response) => {
     const question = await Question.findOneAndUpdate(
       { _id: req.params.id, userId },
       { $set: { status: QuestionStatus.Solved, solvedAt: new Date(), ...normalizedSolutions } },
-      { new: true, projection: LIST_PROJECTION }
+      { returnDocument: "after", projection: LIST_PROJECTION }
     ).lean();
 
     await invalidateStats(userId!, ALL_STATS);
@@ -315,7 +319,7 @@ export const resetQuestion = async (req: AuthRequest, res: Response) => {
     const question = await Question.findOneAndUpdate(
       { _id: req.params.id, userId, status: QuestionStatus.Solved },
       { $set: { status: QuestionStatus.Pending }, $unset: { solvedAt: 1 } },
-      { new: true, projection: LIST_PROJECTION }
+      { returnDocument: "after", projection: LIST_PROJECTION }
     ).lean();
 
     if (!question) {
@@ -344,7 +348,8 @@ export const toggleStarred = async (req: AuthRequest, res: Response) => {
     const question = await Question.findOneAndUpdate(
       { _id: req.params.id, userId },
       [{ $set: { starred: { $not: "$starred" } } }],
-      { new: true, projection: LIST_PROJECTION }
+      // updatePipeline: mongoose 9 rejects array updates without it
+      { returnDocument: "after", projection: LIST_PROJECTION, updatePipeline: true }
     ).lean();
 
     if (!question) {
@@ -643,7 +648,7 @@ export const getSuggestions = async (req: AuthRequest, res: Response) => {
       companyTags: f.companyTags.map((c: any) => c.company),
     };
 
-    await cache.set(cacheKey, result, STATS_CACHE_TTL_MS);
+    await cache.set(cacheKey, result, STATS_CACHE_TTL_MS, userIndex(userId!));
     sendSuccess(res, result);
   } catch (error) {
     logger.error((error as Error).message);

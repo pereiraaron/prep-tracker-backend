@@ -9,13 +9,14 @@ import { connectToDB } from "./db/connect";
 import { requestLogger } from "./middleware/requestLogger";
 import { errorHandler } from "./middleware/errorHandler";
 import { logger } from "./utils/logger";
-import swaggerSpec from "./swagger";
+import { createRateLimitStore } from "./utils/rateLimitStore";
 import questionRoutes from "./routes/question";
 import statsRoutes from "./routes/stats";
 import applicationRoutes from "./routes/application";
 import interviewRoutes from "./routes/interview";
 
-dotenv.config();
+// quiet: dotenv 17+ logs an injection banner on load by default
+dotenv.config({ quiet: true });
 
 // Validate required environment variables
 const requiredEnvVars = ["JWT_SECRET", "CONNECTION_STRING"] as const;
@@ -35,13 +36,14 @@ const isProd = process.env.NODE_ENV === "production";
 app.use(helmet());
 app.use(cors());
 
-// Rate limiting
+// Rate limiting (shared across instances when Upstash is configured)
 app.use(
   rateLimit({
     windowMs: 15 * 60 * 1000,
     max: isProd ? 300 : 1000,
     standardHeaders: true,
     legacyHeaders: false,
+    store: createRateLimitStore(),
     message: { success: false, error: { message: "Too many requests, please try again later" } },
   })
 );
@@ -54,8 +56,16 @@ app.use(express.json({ limit: "1mb" }));
 app.use(requestLogger);
 
 // Swagger docs (relaxed CSP for CDN scripts)
-app.get("/api/docs/spec.json", (_, res) => {
-  res.status(200).json(swaggerSpec);
+// The spec is ~53KB of object literal; loading it lazily (and memoizing) keeps it
+// off the serverless cold-start path, since only this route needs it.
+let swaggerSpec: unknown;
+const loadSwaggerSpec = async () => {
+  if (!swaggerSpec) swaggerSpec = (await import("./swagger")).default;
+  return swaggerSpec;
+};
+
+app.get("/api/docs/spec.json", async (_, res) => {
+  res.status(200).json(await loadSwaggerSpec());
 });
 app.get(
   "/api/docs",

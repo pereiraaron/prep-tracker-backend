@@ -18,11 +18,13 @@ import { QuestionStatus } from "../../types/question";
 jest.mock("../../models/Question", () => ({
   Question: {
     create: jest.fn(),
+    find: jest.fn(),
     findOne: jest.fn(),
     findOneAndDelete: jest.fn(),
     findOneAndUpdate: jest.fn(),
     exists: jest.fn(),
     aggregate: jest.fn(),
+    countDocuments: jest.fn(),
     deleteMany: jest.fn(),
   },
 }));
@@ -31,8 +33,12 @@ jest.mock("../../utils/cache", () => ({
   cache: {
     get: jest.fn().mockReturnValue(null),
     set: jest.fn(),
+    setMany: jest.fn(),
+    del: jest.fn(),
     invalidate: jest.fn(),
+    invalidateMany: jest.fn(),
   },
+  userIndex: (userId: string) => `cacheidx:${userId}`,
 }));
 
 const mockRes = () => {
@@ -74,9 +80,24 @@ const mockFindOneChain = (result: any) => ({
   lean: jest.fn().mockResolvedValue(result),
 });
 
-const mockPaginatedAggregate = (items: any[], total = items.length) => {
-  (Question.aggregate as jest.Mock).mockResolvedValue([{ data: items, total: [{ count: total }] }]);
+/**
+ * paginatedList uses find().select().sort().skip().limit().lean() alongside
+ * countDocuments(), so the sort can be served from an index.
+ */
+const mockPaginatedList = (items: any[], total = items.length) => {
+  const chain: any = {};
+  chain.select = jest.fn().mockReturnValue(chain);
+  chain.sort = jest.fn().mockReturnValue(chain);
+  chain.skip = jest.fn().mockReturnValue(chain);
+  chain.limit = jest.fn().mockReturnValue(chain);
+  chain.lean = jest.fn().mockResolvedValue(items);
+  (Question.find as jest.Mock).mockReturnValue(chain);
+  (Question.countDocuments as jest.Mock).mockResolvedValue(total);
+  return chain;
 };
+
+/** Filter passed to find() — the equivalent of the old pipeline[0].$match. */
+const findFilter = () => (Question.find as jest.Mock).mock.calls[0][0];
 
 beforeEach(() => jest.clearAllMocks());
 
@@ -175,7 +196,7 @@ describe("createQuestion", () => {
 describe("getAllQuestions", () => {
   it("returns paginated questions", async () => {
     const questions = [mockQuestionDoc()];
-    mockPaginatedAggregate(questions, 1);
+    mockPaginatedList(questions, 1);
 
     const req = mockReq();
     const res = mockRes();
@@ -189,28 +210,26 @@ describe("getAllQuestions", () => {
   });
 
   it("applies backlog filter", async () => {
-    mockPaginatedAggregate([], 0);
+    mockPaginatedList([], 0);
 
     const req = mockReq({ query: { backlog: "true", starred: "true" } });
     const res = mockRes();
 
     await getAllQuestions(req, res);
 
-    const pipeline = (Question.aggregate as jest.Mock).mock.calls[0][0];
-    expect(pipeline[0].$match.status).toBe(QuestionStatus.Pending);
-    expect(pipeline[0].$match.starred).toBe(true);
+    expect(findFilter().status).toBe(QuestionStatus.Pending);
+    expect(findFilter().starred).toBe(true);
   });
 
   it("excludes backlog by default", async () => {
-    mockPaginatedAggregate([], 0);
+    mockPaginatedList([], 0);
 
     const req = mockReq();
     const res = mockRes();
 
     await getAllQuestions(req, res);
 
-    const pipeline = (Question.aggregate as jest.Mock).mock.calls[0][0];
-    expect(pipeline[0].$match.status).toBe(QuestionStatus.Solved);
+    expect(findFilter().status).toBe(QuestionStatus.Solved);
   });
 });
 
@@ -252,6 +271,33 @@ describe("updateQuestion", () => {
     await updateQuestion(req, res);
 
     expect(res.status).toHaveBeenCalledWith(200);
+    // Plain $set update — no pipeline, so no updatePipeline flag
+    const [, update, options] = (Question.findOneAndUpdate as jest.Mock).mock.calls[0];
+    expect(Array.isArray(update)).toBe(false);
+    expect(options.updatePipeline).toBeUndefined();
+  });
+
+  it("uses a pipeline update to set solvedAt only when adding a solution", async () => {
+    const question = mockQuestionDoc({ status: QuestionStatus.Solved });
+    (Question.findOneAndUpdate as jest.Mock).mockReturnValue(mockFindOneAndUpdateChain(question));
+
+    const req = mockReq({
+      params: { id: "q1" },
+      body: { solutions: [{ content: "function twoSum() {}" }] },
+    });
+    const res = mockRes();
+
+    await updateQuestion(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const [, update, options] = (Question.findOneAndUpdate as jest.Mock).mock.calls[0];
+    // solvedAt is preserved if already set, hence the pipeline
+    expect(update).toEqual([
+      { $set: expect.objectContaining({ solvedAt: { $ifNull: ["$solvedAt", expect.any(Date)] } }) },
+    ]);
+    // mongoose 9 rejects array updates without this
+    expect(options.updatePipeline).toBe(true);
+    expect(options.returnDocument).toBe("after");
   });
 
   it("returns 404 when not found", async () => {
@@ -316,7 +362,7 @@ describe("solveQuestion", () => {
           solutions: [{ content: "function twoSum() {}" }],
         },
       },
-      { new: true, projection: expect.any(Object) }
+      { returnDocument: "after", projection: expect.any(Object) }
     );
     expect(res.status).toHaveBeenCalledWith(200);
   });
@@ -358,7 +404,7 @@ describe("resetQuestion", () => {
     expect(Question.findOneAndUpdate).toHaveBeenCalledWith(
       { _id: "q1", userId: "user1", status: QuestionStatus.Solved },
       { $set: { status: QuestionStatus.Pending }, $unset: { solvedAt: 1 } },
-      { new: true, projection: expect.any(Object) }
+      { returnDocument: "after", projection: expect.any(Object) }
     );
     expect(res.status).toHaveBeenCalledWith(200);
   });
@@ -383,10 +429,11 @@ describe("toggleStarred", () => {
     const res = mockRes();
     await toggleStarred(mockReq({ params: { id: "q1" } }), res);
 
+    // updatePipeline is required for the array update — mongoose 9 throws without it
     expect(Question.findOneAndUpdate).toHaveBeenCalledWith(
       { _id: "q1", userId: "user1" },
       [{ $set: { starred: { $not: "$starred" } } }],
-      { new: true, projection: expect.any(Object) }
+      { returnDocument: "after", projection: expect.any(Object), updatePipeline: true }
     );
     expect(res.status).toHaveBeenCalledWith(200);
   });
@@ -404,29 +451,29 @@ describe("toggleStarred", () => {
 // ---- searchQuestions ----
 describe("searchQuestions", () => {
   it("uses text index for word search", async () => {
-    mockPaginatedAggregate([], 0);
+    const chain = mockPaginatedList([], 0);
 
     const res = mockRes();
     await searchQuestions(mockReq({ query: { q: "Two Sum" } }), res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    const pipeline = (Question.aggregate as jest.Mock).mock.calls[0][0];
-    expect(pipeline[0].$match.$text).toEqual({ $search: "Two Sum" });
-    expect(pipeline[1].$facet.data[0].$sort).toEqual({
+    expect(findFilter().$text).toEqual({ $search: "Two Sum" });
+    expect(chain.sort).toHaveBeenCalledWith({
       score: { $meta: "textScore" },
       createdAt: -1,
     });
+    // textScore must be projected to be sortable, but is stripped from responses
+    expect(chain.select.mock.calls[0][0].score).toEqual({ $meta: "textScore" });
   });
 
   it("uses regex for short substring search", async () => {
-    mockPaginatedAggregate([], 0);
+    mockPaginatedList([], 0);
 
     const res = mockRes();
     await searchQuestions(mockReq({ query: { q: "us" } }), res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    const pipeline = (Question.aggregate as jest.Mock).mock.calls[0][0];
-    expect(pipeline[0].$match.$or).toEqual([
+    expect(findFilter().$or).toEqual([
       { title: { $regex: "us", $options: "i" } },
       { topics: { $regex: "us", $options: "i" } },
       { tags: { $regex: "us", $options: "i" } },
@@ -479,13 +526,12 @@ describe("createBacklogQuestion", () => {
 // ---- getBacklogQuestions ----
 describe("getBacklogQuestions", () => {
   it("filters by pending status", async () => {
-    mockPaginatedAggregate([], 0);
+    mockPaginatedList([], 0);
 
     const res = mockRes();
     await getBacklogQuestions(mockReq(), res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    const pipeline = (Question.aggregate as jest.Mock).mock.calls[0][0];
-    expect(pipeline[0].$match.status).toBe(QuestionStatus.Pending);
+    expect(findFilter().status).toBe(QuestionStatus.Pending);
   });
 });

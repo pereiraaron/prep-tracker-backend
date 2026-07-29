@@ -6,7 +6,7 @@ import { QuestionStatus, Difficulty, QuestionSource } from "../types/question";
 import { DEFAULT_TIMEZONE, toDateString, toMidnight } from "../utils/date";
 import { sendSuccess, sendError } from "../utils/response";
 import { logger } from "../utils/logger";
-import { cache } from "../utils/cache";
+import { cache, userIndex, CacheEntryInput } from "../utils/cache";
 import { STATS_PROJECT, STATS_CACHE_TTL_MS, userStatsStages } from "../utils/aggregation";
 import {
   computeApplicationStats,
@@ -30,7 +30,7 @@ const handleStat = async (
       if (cached) { sendSuccess(res, cached); return; }
     }
     const data = await compute();
-    await cache.set(cacheKey, data, STATS_CACHE_TTL_MS);
+    await cache.set(cacheKey, data, STATS_CACHE_TTL_MS, userIndex(req.user!.id));
     sendSuccess(res, data);
   } catch (error) {
     logger.error((error as Error).message);
@@ -1033,29 +1033,36 @@ export const getBatch = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    await cache.set(batchCacheKey, result, STATS_CACHE_TTL_MS);
-
-    // Warm individual endpoint caches so /stats/overview etc. reuse this work
+    // Warm individual endpoint caches so /stats/overview etc. reuse this work.
+    // All of it — including the batch key — goes out in one pipelined round trip.
     const cat = category || "all";
-    const warm: Array<Promise<void>> = [];
-    if (result.overview) warm.push(cache.set(`stats:${userId}:overview`, result.overview, STATS_CACHE_TTL_MS));
-    if (result.categories) warm.push(cache.set(`stats:${userId}:categories`, result.categories, STATS_CACHE_TTL_MS));
-    if (result.difficulties) warm.push(cache.set(`stats:${userId}:difficulties`, result.difficulties, STATS_CACHE_TTL_MS));
-    if (result.sources) warm.push(cache.set(`stats:${userId}:sources`, result.sources, STATS_CACHE_TTL_MS));
-    if (result.difficultyByCategory) warm.push(cache.set(`stats:${userId}:difficultyByCategory`, result.difficultyByCategory, STATS_CACHE_TTL_MS));
-    if (result.topics) warm.push(cache.set(`stats:${userId}:topics:${cat}`, result.topics, STATS_CACHE_TTL_MS));
-    if (result.companyTags) warm.push(cache.set(`stats:${userId}:companyTags`, result.companyTags, STATS_CACHE_TTL_MS));
-    if (result.tags) warm.push(cache.set(`stats:${userId}:tags`, result.tags, STATS_CACHE_TTL_MS));
-    if (result.streaks) warm.push(cache.set(`stats:${userId}:streaks:${tz}`, result.streaks, STATS_CACHE_TTL_MS));
-    if (result.insights) warm.push(cache.set(`stats:${userId}:insights:${tz}`, result.insights, STATS_CACHE_TTL_MS));
-    if (result.heatmap) warm.push(cache.set(`stats:${userId}:heatmap:${year}:${tz}`, result.heatmap, STATS_CACHE_TTL_MS));
-    if (result.progress) warm.push(cache.set(`stats:${userId}:progress:14:${cat}:${tz}`, result.progress, STATS_CACHE_TTL_MS));
-    if (result.weeklyProgress) warm.push(cache.set(`stats:${userId}:weeklyProgress:12:${cat}:${tz}`, result.weeklyProgress, STATS_CACHE_TTL_MS));
-    if (result.cumulativeProgress) warm.push(cache.set(`stats:${userId}:cumulativeProgress:90:${cat}:${tz}`, result.cumulativeProgress, STATS_CACHE_TTL_MS));
-    if (result.dailyByCategory) warm.push(cache.set(`stats:${userId}:dailyByCategory:14:${cat}:${tz}`, result.dailyByCategory, STATS_CACHE_TTL_MS));
-    if (result.applications) warm.push(cache.set(`stats:${userId}:applications`, result.applications, STATS_CACHE_TTL_MS));
-    if (result.interviews) warm.push(cache.set(`stats:${userId}:interviews`, result.interviews, STATS_CACHE_TTL_MS));
-    await Promise.all(warm);
+    const warmKeys: Record<string, string> = {
+      overview: `stats:${userId}:overview`,
+      categories: `stats:${userId}:categories`,
+      difficulties: `stats:${userId}:difficulties`,
+      sources: `stats:${userId}:sources`,
+      difficultyByCategory: `stats:${userId}:difficultyByCategory`,
+      topics: `stats:${userId}:topics:${cat}`,
+      companyTags: `stats:${userId}:companyTags`,
+      tags: `stats:${userId}:tags`,
+      streaks: `stats:${userId}:streaks:${tz}`,
+      insights: `stats:${userId}:insights:${tz}`,
+      heatmap: `stats:${userId}:heatmap:${year}:${tz}`,
+      progress: `stats:${userId}:progress:14:${cat}:${tz}`,
+      weeklyProgress: `stats:${userId}:weeklyProgress:12:${cat}:${tz}`,
+      cumulativeProgress: `stats:${userId}:cumulativeProgress:90:${cat}:${tz}`,
+      dailyByCategory: `stats:${userId}:dailyByCategory:14:${cat}:${tz}`,
+      applications: `stats:${userId}:applications`,
+      interviews: `stats:${userId}:interviews`,
+    };
+
+    const entries: CacheEntryInput[] = [
+      { key: batchCacheKey, data: result, ttlMs: STATS_CACHE_TTL_MS },
+    ];
+    for (const [resultKey, cacheKey] of Object.entries(warmKeys)) {
+      if (result[resultKey]) entries.push({ key: cacheKey, data: result[resultKey], ttlMs: STATS_CACHE_TTL_MS });
+    }
+    await cache.setMany(entries, userIndex(userId));
 
     sendSuccess(res, result);
   } catch (error) {

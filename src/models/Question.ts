@@ -110,9 +110,10 @@ questionSchema.index({ userId: 1, status: 1, createdAt: -1 });
 questionSchema.index({ userId: 1, status: 1, updatedAt: -1 });
 questionSchema.index({ userId: 1, status: 1, title: 1 });
 questionSchema.index({ userId: 1, status: 1, starred: 1, createdAt: -1 });
+// userId prefix keeps $text scans inside one user's entries instead of every user's
 questionSchema.index(
-  { title: "text", topics: "text", tags: "text", companyTags: "text" },
-  { name: "question_text_search" }
+  { userId: 1, title: "text", topics: "text", tags: "text", companyTags: "text" },
+  { name: "question_text_search_v2" }
 );
 
 export const Question = model("Question", questionSchema);

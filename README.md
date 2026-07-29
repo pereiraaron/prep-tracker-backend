@@ -33,6 +33,10 @@ npm run dev             # http://localhost:7002
 | `npm run format` | Format with Prettier |
 | `npm run setup-db` | Create collections and indexes |
 
+> Run `npm run setup-db` after deploying index changes. It drops superseded
+> indexes before creating current ones — required for the text index, since
+> MongoDB allows only one per collection.
+
 ## API Endpoints
 
 API docs available at `/api/docs` when the server is running.

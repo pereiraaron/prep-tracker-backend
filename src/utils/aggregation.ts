@@ -33,8 +33,6 @@ export const LIST_FIELDS = {
   updatedAt: 1,
 } as const;
 
-export const LIST_PROJECT: PipelineStage.Project = { $project: LIST_FIELDS };
-
 /** Mongoose find/update projection (same fields as list responses). */
 export const LIST_PROJECTION = { ...LIST_FIELDS };
 
@@ -59,32 +57,43 @@ export const userStatsStages = (
   STATS_PROJECT,
 ];
 
-type AggregateModel = {
-  aggregate: (pipeline: PipelineStage[]) => Promise<Array<{ data: unknown[]; total: Array<{ count: number }> }>>;
+/** Loosely typed so Mongoose models satisfy it structurally. */
+type PaginatedModel = {
+  find: (filter: Record<string, unknown>) => any;
+  countDocuments: (filter: Record<string, unknown>) => any;
 };
 
 type SortSpec = Record<string, 1 | -1 | { $meta: "textScore" }>;
 
+const isTextScoreSort = (sort: SortSpec) =>
+  Object.values(sort).some((v) => typeof v === "object" && v !== null && "$meta" in v);
+
 export const paginatedList = async <T>(
-  model: AggregateModel,
+  model: PaginatedModel,
   filter: Record<string, unknown>,
   sort: SortSpec,
   skip: number,
   limit: number
 ) => {
-  // Project only the page of docs (after sort/skip/limit), not the full match set
-  const [result] = await model.aggregate([
-    { $match: filter },
-    {
-      $facet: {
-        data: [{ $sort: sort as PipelineStage.Sort["$sort"] }, { $skip: skip }, { $limit: limit }, LIST_PROJECT],
-        total: [{ $count: "count" }],
-      },
-    },
+  // find().sort() can satisfy the sort from an index. A $sort inside a $facet
+  // sub-pipeline cannot, which forces an in-memory sort of the entire match set
+  // carrying the full solutions/notes blobs.
+  const byTextScore = isTextScoreSort(sort);
+  const projection: Record<string, unknown> = byTextScore
+    ? { ...LIST_PROJECTION, score: { $meta: "textScore" } }
+    : { ...LIST_PROJECTION };
+
+  const [items, total] = await Promise.all([
+    model.find(filter).select(projection).sort(sort).skip(skip).limit(limit).lean(),
+    model.countDocuments(filter),
   ]);
 
+  const list = (items ?? []) as Array<Record<string, unknown>>;
+  // textScore has to be projected to be sortable on older servers; keep it internal.
+  if (byTextScore) for (const item of list) delete item.score;
+
   return {
-    items: result.data as T[],
-    total: result.total[0]?.count ?? 0,
+    items: list as T[],
+    total: (total as number) ?? 0,
   };
 };
